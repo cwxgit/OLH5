@@ -102,8 +102,9 @@ const DEFAULT_CENTER_ZOOM = 8
 const GEO_ZOOM = 16
 const AREA_ZOOMS = [6, 10, 14, 16, 18]
 const baseUrl = 'https://layers.cpxiang.tech/'
-const loginUrl = baseUrl + 'index.php?admin=1&dir=users&php=login&sub=2'
-const registerUrl = baseUrl + 'index.php?admin=1&dir=users&php=reg&sub=2'
+const positionApiBaseUrl = 'https://oladmin.cc'
+const loginUrl = positionApiBaseUrl + '/login'
+const registerUrl = positionApiBaseUrl + '/register'
 
 const mapRef = ref(null)
 const viewRef = ref(null)
@@ -308,19 +309,18 @@ function resolveAppUrl(path) {
 }
 
 function getNextAreaRequestUrl(parentCode) {
-	const query = `admin=0&dir=first&php=nextarea&pid=${parentCode}`
+	const path = `/admin/position/nextarea?pid=${encodeURIComponent(String(parentCode))}`
 	if (typeof window !== 'undefined' && /^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname)) {
-		return `/index.php?${query}`
+		return path
 	}
-	return `${baseUrl}index.php?${query}`
+	return `${positionApiBaseUrl}${path}`
 }
 
 function getSubmitPositionUrl() {
-	const query = 'admin=0&dir=first&php=ajax'
 	if (typeof window !== 'undefined' && /^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname)) {
-		return `/index.php?${query}`
+		return '/admin/position/insert'
 	}
-	return `${baseUrl}index.php?${query}`
+	return `${positionApiBaseUrl}/admin/position/insert`
 }
 
 function request(options) {
@@ -328,7 +328,17 @@ function request(options) {
 		uni.request({
 			...options,
 			url: resolveAppUrl(options.url),
-			success: resolve,
+			success: (response) => {
+				if (response.statusCode < 200 || response.statusCode >= 300) {
+					const data = response.data
+					const message = data && typeof data === 'object' && data.message
+						? data.message
+						: `请求失败（HTTP ${response.statusCode}）`
+					reject(new Error(message))
+					return
+				}
+				resolve(response)
+			},
 			fail: reject
 		})
 	})
@@ -367,9 +377,8 @@ async function submitUserPosition(wgs84) {
 		await request({
 			url: getSubmitPositionUrl(),
 			method: 'POST',
-				header: {
-				'content-type': 'application/x-www-form-urlencoded',
-				'X-Requested-With': 'XMLHttpRequest'
+			header: {
+				'content-type': 'application/x-www-form-urlencoded'
 			},
 			data: buildFormBody({
 				position: positionText,
