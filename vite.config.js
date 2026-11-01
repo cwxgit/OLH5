@@ -7,7 +7,12 @@ export default defineConfig({
 		proxy: {
 			'/admin/position': {
 				target: 'http://oladmin.cc',
-				changeOrigin: true
+				changeOrigin: true,
+				configure: (proxy) => {
+					proxy.on('proxyReq', (proxyRequest) => {
+						proxyRequest.removeHeader('origin')
+					})
+				}
 			}
 		}
 	}

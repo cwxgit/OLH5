@@ -1,78 +1,111 @@
 <template>
 	<view class="page-shell">
-		<view class="hero-panel">
-			<view class="hero-copy">
-				<text class="eyebrow">OLH5 / Vue3 + OpenLayers</text>
-				<text class="hero-title">移动端地图浏览与行政区联动</text>
-				<text class="hero-desc">
-					复刻 `layers.cpxiang.tech` 的核心能力，保留原有后端接口调用路径，并针对 H5 场景优化布局与交互。
-				</text>
-			</view>
-
-			<view class="hero-actions">
-				<button class="geo-button" @click="locateMe">{{ geoButtonText }}</button>
-				<button v-if="hasLocated" class="ghost-button" @click="recenterToUser">回到我的位置</button>
-			</view>
-
-			<view class="status-strip">
-				<text class="status-pill">图层：{{ activeLayerLabel }}</text>
-				<text class="status-pill">坐标：{{ activeCoordLabel }}</text>
-				<text v-if="locationLabel" class="status-pill success-pill">{{ locationLabel }}</text>
-			</view>
-
-			<view class="toolbar-card">
-				<view class="toolbar-head">
-					<text class="toolbar-title">地址联动</text>
-					<view class="link-actions">
-						<text class="link-action" @click="openLink(loginUrl)">登录</text>
-						<text class="link-action" @click="openLink(registerUrl)">注册</text>
+		<view class="workspace-layout" :class="{ 'sidebar-collapsed': !sidebarVisible }">
+			<view class="sidebar-panel">
+				<button class="sidebar-toggle" @click="toggleSidebar">隐藏控制栏</button>
+				<view class="hero-panel">
+					<view class="hero-copy">
+						<text class="eyebrow">OLH5 / Vue3 + OpenLayers</text>
+						<text class="hero-title">移动端地图浏览与行政区联动</text>
+						<text class="hero-desc">
+							复刻 `layers.cpxiang.tech` 的核心能力，保留原有后端接口调用路径，并针对 H5 场景优化布局与交互。
+						</text>
 					</view>
-				</view>
 
-				<view class="select-grid">
-					<picker
-						v-for="(group, index) in areaGroups"
-						:key="group.key"
-						:range="group.options"
-						range-key="name"
-						:value="getPickerIndex(group)"
-						@change="handleAreaChange(index, $event)"
-					>
-						<view class="select-card">
-							<text class="select-label">{{ areaLabel(index) }}</text>
-							<text class="select-value">{{ getPickerLabel(group) }}</text>
+					<view class="hero-actions">
+						<button class="geo-button" @click="locateMe">{{ geoButtonText }}</button>
+						<button v-if="hasLocated" class="ghost-button" @click="recenterToUser">回到我的位置</button>
+					</view>
+
+					<view class="status-strip">
+						<text class="status-pill">图层：{{ activeLayerLabel }}</text>
+						<text class="status-pill">坐标：{{ activeCoordLabel }}</text>
+						<text v-if="locationLabel" class="status-pill success-pill">{{ locationLabel }}</text>
+					</view>
+
+					<view class="toolbar-card">
+						<view class="toolbar-head">
+							<text class="toolbar-title">地址联动</text>
+							<view class="link-actions">
+								<text class="link-action" @click="openLink(loginUrl)">登录</text>
+								<text class="link-action" @click="openLink(registerUrl)">注册</text>
+							</view>
 						</view>
-					</picker>
+						<view class="select-grid">
+							<picker
+								v-for="(group, index) in areaGroups"
+								:key="group.key"
+								:range="group.options"
+								range-key="name"
+								:value="getPickerIndex(group)"
+								@change="handleAreaChange(index, $event)"
+							>
+								<view class="select-card">
+									<text class="select-label">{{ areaLabel(index) }}</text>
+									<text class="select-value">{{ getPickerLabel(group) }}</text>
+								</view>
+							</picker>
+						</view>
+
+						<view class="place-search">
+							<input
+								class="place-search-input"
+								type="text"
+								:value="areaSearchKeyword"
+								placeholder="搜索地名或行政区"
+								confirm-type="search"
+								@input="handleAreaSearchInput"
+								@confirm="searchAreasNow"
+							/>
+							<view v-if="areaSearchLoading || areaSearchError || areaSearchResults.length || (areaSearchHasSearched && !areaSearchLoading)" class="place-search-results">
+								<text v-if="areaSearchLoading" class="place-search-message">正在搜索...</text>
+								<text v-else-if="areaSearchError" class="place-search-message place-search-error">{{ areaSearchError }}</text>
+								<template v-else-if="areaSearchResults.length">
+									<view
+										v-for="result in areaSearchResults"
+										:key="result.code"
+										class="place-search-result"
+										@click="selectSearchResult(result)"
+									>
+										<text class="place-search-name">{{ result.name }}</text>
+										<text class="place-search-meta">{{ areaLabel(Number(result.level) - 1) }} · {{ result.lng }},{{ result.lat }}</text>
+									</view>
+								</template>
+								<text v-else class="place-search-message">没有找到匹配地点</text>
+							</view>
+						</view>
+					</view>
 				</view>
-			</view>
-		</view>
 
-		<view class="map-panel">
-			<view id="ol-map" class="map-canvas"></view>
-		</view>
-
-		<view class="layer-panel">
-			<view class="layer-panel-head">
-				<text class="layer-title">底图切换</text>
-				<text class="layer-subtitle">与 PC 站点保持一致</text>
-			</view>
-			<view class="layer-list">
-				<view
-					v-for="layer in layerConfigs"
-					:key="layer.key"
-					class="layer-item"
-					:class="{ disabled: layer.disabled }"
-					@click="changeLayer(layer.key)"
-				>
-					<view class="layer-radio" :class="{ active: activeLayerKey === layer.key, disabled: layer.disabled }"></view>
-					<view class="layer-meta">
-						<text class="layer-name">{{ layer.label }}</text>
-						<text class="layer-extra">{{ layer.coordLabel }}{{ layer.note ? ' / ' + layer.note : '' }}</text>
+				<view class="layer-panel">
+					<view class="layer-panel-head">
+						<text class="layer-title">底图切换</text>
+						<text class="layer-subtitle">与 PC 站点保持一致</text>
+					</view>
+					<view class="layer-list">
+						<view
+							v-for="layer in layerConfigs"
+							:key="layer.key"
+							class="layer-item"
+							:class="{ disabled: layer.disabled }"
+							@click="changeLayer(layer.key)"
+						>
+							<view class="layer-radio" :class="{ active: activeLayerKey === layer.key, disabled: layer.disabled }"></view>
+							<view class="layer-meta">
+								<text class="layer-name">{{ layer.label }}</text>
+								<text class="layer-extra">{{ layer.coordLabel }}{{ layer.note ? ' / ' + layer.note : '' }}</text>
+							</view>
+						</view>
+					</view>
+					<view v-if="eesDisabledHint" class="layer-hint">
+						NASA Viirs 图层仅在缩放级别小于等于 8 时可用，当前缩放过大，已自动禁用。
 					</view>
 				</view>
 			</view>
-			<view v-if="eesDisabledHint" class="layer-hint">
-				NASA Viirs 图层仅在缩放级别小于等于 8 时可用，当前缩放过大，已自动禁用。
+
+			<view class="map-panel">
+				<button v-if="!sidebarVisible" class="sidebar-toggle sidebar-toggle-floating" @click="toggleSidebar">显示控制栏</button>
+				<view id="ol-map" class="map-canvas"></view>
 			</view>
 		</view>
 	</view>
@@ -102,15 +135,24 @@ const DEFAULT_CENTER_ZOOM = 8
 const GEO_ZOOM = 16
 const AREA_ZOOMS = [6, 10, 14, 16, 18]
 const baseUrl = 'https://layers.cpxiang.tech/'
-const positionApiBaseUrl = 'https://oladmin.cc'
-const loginUrl = positionApiBaseUrl + '/login'
-const registerUrl = positionApiBaseUrl + '/register'
+const adminBaseUrl = 'http://oladmin.cc'
+const positionApiBaseUrl = import.meta.env.DEV ? '' : adminBaseUrl
+const loginUrl = adminBaseUrl + '/login'
+const registerUrl = adminBaseUrl + '/register'
 
 const mapRef = ref(null)
 const viewRef = ref(null)
+const sidebarVisible = ref(true)
 const positionFeatureRef = ref(null)
 const accuracyFeatureRef = ref(null)
 const geolocationWatchId = ref(null)
+const areaSearchKeyword = ref('')
+const areaSearchResults = ref([])
+const areaSearchLoading = ref(false)
+const areaSearchHasSearched = ref(false)
+const areaSearchError = ref('')
+let areaSearchTimer = null
+let areaSearchRequestId = 0
 const lastSubmittedPosition = ref('')
 const markerSourceWgs84 = ref(null)
 const userLocationWgs84 = ref(null)
@@ -285,6 +327,13 @@ function changeLayer(key) {
 	renderMarker()
 }
 
+function toggleSidebar() {
+	sidebarVisible.value = !sidebarVisible.value
+	nextTick(() => {
+		requestAnimationFrame(() => mapRef.value && mapRef.value.updateSize())
+	})
+}
+
 function roundCoord(value, digits = 6) {
 	return Number(value.toFixed(digits))
 }
@@ -310,16 +359,14 @@ function resolveAppUrl(path) {
 
 function getNextAreaRequestUrl(parentCode) {
 	const path = `/admin/position/nextarea?pid=${encodeURIComponent(String(parentCode))}`
-	if (typeof window !== 'undefined' && /^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname)) {
-		return path
-	}
 	return `${positionApiBaseUrl}${path}`
 }
 
+function getAreaSearchUrl(keyword) {
+	return `${positionApiBaseUrl}/admin/position/query?keyword=${encodeURIComponent(keyword)}`
+}
+
 function getSubmitPositionUrl() {
-	if (typeof window !== 'undefined' && /^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname)) {
-		return '/admin/position/insert'
-	}
 	return `${positionApiBaseUrl}/admin/position/insert`
 }
 
@@ -457,6 +504,101 @@ function parseAreaPayload(rawText) {
 	}
 
 	return JSON.parse(text)
+}
+
+function handleAreaSearchInput(event) {
+	areaSearchKeyword.value = String(event && event.detail ? event.detail.value : '')
+	areaSearchResults.value = []
+	areaSearchError.value = ''
+	areaSearchHasSearched.value = false
+	areaSearchRequestId += 1
+	areaSearchLoading.value = false
+
+	if (areaSearchTimer) {
+		clearTimeout(areaSearchTimer)
+		areaSearchTimer = null
+	}
+
+	const keyword = areaSearchKeyword.value.trim()
+	if (!keyword) {
+		return
+	}
+
+	const requestId = areaSearchRequestId
+	areaSearchTimer = setTimeout(() => {
+		areaSearchTimer = null
+		void searchAreas(keyword, requestId)
+	}, 300)
+}
+
+function searchAreasNow() {
+	if (areaSearchTimer) {
+		clearTimeout(areaSearchTimer)
+		areaSearchTimer = null
+	}
+	areaSearchRequestId += 1
+	void searchAreas(areaSearchKeyword.value.trim(), areaSearchRequestId)
+}
+
+async function searchAreas(keyword, requestId) {
+	if (!keyword) {
+		areaSearchResults.value = []
+		areaSearchHasSearched.value = false
+		areaSearchError.value = ''
+		areaSearchLoading.value = false
+		return
+	}
+
+	areaSearchLoading.value = true
+	areaSearchHasSearched.value = true
+	areaSearchError.value = ''
+	try {
+		const response = await request({
+			url: getAreaSearchUrl(keyword),
+			method: 'GET'
+		})
+		const rawPayload = response && typeof response === 'object' && 'data' in response
+			? response.data
+			: response
+		const payload = typeof rawPayload === 'string'
+			? parseAreaPayload(rawPayload)
+			: rawPayload
+		if (!Array.isArray(payload)) {
+			throw new Error('地点查询接口返回格式无效')
+		}
+
+		if (requestId !== areaSearchRequestId) {
+			return
+		}
+		areaSearchResults.value = payload
+			.filter((item) => item && item.code && item.name)
+			.map((item) => ({
+				...item,
+				code: String(item.code),
+				level: Number(item.level),
+				position: [Number(item.lng), Number(item.lat)]
+			}))
+			.filter((item) => Number.isFinite(item.position[0]) && Number.isFinite(item.position[1]))
+	} catch (error) {
+		if (requestId !== areaSearchRequestId) {
+			return
+		}
+		console.warn('查询行政区失败', error)
+		areaSearchError.value = error && error.message ? error.message : '地点查询失败，请稍后重试'
+		areaSearchResults.value = []
+	} finally {
+		if (requestId === areaSearchRequestId) {
+			areaSearchLoading.value = false
+		}
+	}
+}
+
+function selectSearchResult(result) {
+	panToArea(result.position, result.level, 'gcj02')
+	areaSearchKeyword.value = result.name
+	areaSearchResults.value = []
+	areaSearchHasSearched.value = false
+	areaSearchError.value = ''
 }
 
 function panToArea(position, level, coordType = 'gcj02') {
@@ -685,6 +827,11 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+	if (areaSearchTimer) {
+		clearTimeout(areaSearchTimer)
+		areaSearchTimer = null
+	}
+	areaSearchRequestId += 1
 	if (typeof navigator !== 'undefined' && navigator.geolocation && geolocationWatchId.value !== null) {
 		navigator.geolocation.clearWatch(geolocationWatchId.value)
 		geolocationWatchId.value = null
@@ -701,11 +848,47 @@ onBeforeUnmount(() => {
 .page-shell {
 	min-height: 100vh;
 	padding: 24rpx 24rpx 32rpx;
+	box-sizing: border-box;
 	background:
 		radial-gradient(circle at top left, rgba(255, 196, 121, 0.28), transparent 30%),
 		linear-gradient(180deg, #f7f4ec 0%, #efe7d8 44%, #d8ddd1 100%);
 	font-family: "Avenir Next", "PingFang SC", "Microsoft YaHei", sans-serif;
 	color: #183153;
+}
+
+.workspace-layout {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	gap: 24rpx;
+}
+
+.sidebar-panel {
+	display: contents;
+}
+
+.hero-panel,
+.layer-panel {
+	min-width: 0;
+}
+
+.sidebar-toggle {
+	display: none;
+	align-self: flex-end;
+	box-sizing: border-box;
+	width: 100%;
+	margin: 0;
+	padding: 0 18px;
+	height: 36px;
+	line-height: 36px;
+	border: 0;
+	border-radius: 8px;
+	background: #0f766e;
+	color: #ffffff;
+	font-size: 14px;
+}
+
+.sidebar-toggle::after {
+	border: 0;
 }
 
 .hero-panel {
@@ -829,9 +1012,70 @@ onBeforeUnmount(() => {
 	color: #0f766e;
 }
 
+.place-search {
+	position: relative;
+	z-index: 2;
+	margin-top: 18rpx;
+}
+
+.place-search-input {
+	box-sizing: border-box;
+	width: 100%;
+	height: 76rpx;
+	padding: 0 22rpx;
+	border: 2rpx solid rgba(36, 59, 83, 0.12);
+	border-radius: 16rpx;
+	background: #fffdfa;
+	font-size: 26rpx;
+	color: #243b53;
+}
+
+.place-search-results {
+	margin-top: 8rpx;
+	border: 2rpx solid rgba(36, 59, 83, 0.08);
+	border-radius: 16rpx;
+	background: #fffdfa;
+	box-shadow: 0 10rpx 24rpx rgba(36, 59, 83, 0.08);
+	overflow: hidden;
+}
+
+.place-search-result {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16rpx;
+	padding: 18rpx 20rpx;
+	border-bottom: 1rpx solid rgba(36, 59, 83, 0.08);
+}
+
+.place-search-result:last-child {
+	border-bottom: 0;
+}
+
+.place-search-name {
+	font-size: 26rpx;
+	font-weight: 600;
+	color: #243b53;
+}
+
+.place-search-meta,
+.place-search-message {
+	font-size: 22rpx;
+	color: #7b8794;
+}
+
+.place-search-message {
+	display: block;
+	padding: 20rpx;
+}
+
+.place-search-error {
+	color: #b42318;
+}
+
 .select-grid {
 	display: grid;
-	grid-template-columns: repeat(2, minmax(0, 1fr));
+	grid-template-columns: minmax(0, 1fr);
 	gap: 16rpx;
 	margin-top: 18rpx;
 }
@@ -862,13 +1106,20 @@ onBeforeUnmount(() => {
 
 .map-panel {
 	position: relative;
-	margin-top: 24rpx;
-	height: calc(100vh - 700rpx);
-	min-height: 780rpx;
+	height: 60vh;
+	min-height: 420px;
 	border-radius: 30rpx;
 	overflow: hidden;
 	box-shadow: 0 24rpx 56rpx rgba(36, 59, 83, 0.18);
 	background: #dbe3da;
+}
+
+.sidebar-toggle-floating {
+	position: absolute;
+	z-index: 2;
+	top: 12px;
+	left: 12px;
+	width: auto;
 }
 
 .map-canvas {
@@ -877,7 +1128,6 @@ onBeforeUnmount(() => {
 }
 
 .layer-panel {
-	margin-top: 24rpx;
 	padding: 20rpx;
 	border-radius: 24rpx;
 	background: rgba(16, 24, 32, 0.82);
@@ -886,8 +1136,9 @@ onBeforeUnmount(() => {
 }
 
 .layer-list {
-	display: flex;
-	flex-direction: column;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	gap: 8px;
 }
 
 .layer-panel-head {
@@ -999,9 +1250,34 @@ onBeforeUnmount(() => {
 	padding: 10rpx 14rpx;
 }
 
-@media screen and (min-width: 768px) {
+@media screen and (min-width: 768px) and (hover: hover) and (pointer: fine) {
 	.page-shell {
 		padding: 24px;
+	}
+
+	.workspace-layout {
+		grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+		align-items: stretch;
+		gap: 24px;
+		min-height: calc(100vh - 48px);
+	}
+
+	.sidebar-panel {
+		display: flex;
+		flex-direction: column;
+		gap: 16px;
+	}
+
+	.workspace-layout.sidebar-collapsed .sidebar-panel {
+		display: none;
+	}
+
+	.sidebar-toggle {
+		display: block;
+	}
+
+	.sidebar-toggle-floating {
+		display: block;
 	}
 
 	.hero-panel {
@@ -1009,12 +1285,13 @@ onBeforeUnmount(() => {
 	}
 
 	.select-grid {
-		grid-template-columns: repeat(4, minmax(0, 1fr));
+		grid-template-columns: minmax(0, 1fr);
 	}
 
 	.map-panel {
-		height: calc(100vh - 420px);
+		height: auto;
 		min-height: 580px;
+		grid-column: auto;
 	}
 
 	.layer-panel {
@@ -1022,30 +1299,35 @@ onBeforeUnmount(() => {
 	}
 
 	.layer-panel-head {
-		display: flex;
-		justify-content: space-between;
-		align-items: flex-end;
-		gap: 12px;
+		display: block;
 	}
 
 	.layer-list {
-		flex-direction: row;
-		flex-wrap: wrap;
-		gap: 12px;
+		grid-template-columns: minmax(0, 1fr);
+		gap: 0;
 	}
 
 	.layer-item {
-		flex: 1 1 calc(33.333% - 12px);
-		min-width: 180px;
 		cursor: pointer;
 		padding: 14px 12px;
-		border-bottom: 0;
-		border-radius: 16px;
-		background: rgba(255, 255, 255, 0.05);
 	}
 
 	.layer-item:hover {
 		opacity: 0.92;
 	}
+
+	.map-panel {
+		margin-top: 0;
 	}
+
+	.workspace-layout.sidebar-collapsed {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+@media screen and (min-width: 1200px) and (hover: hover) and (pointer: fine) {
+	.workspace-layout {
+		grid-template-columns: minmax(320px, 400px) minmax(0, 1fr);
+	}
+}
 </style>
