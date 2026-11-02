@@ -421,7 +421,7 @@ async function submitUserPosition(wgs84) {
 	}
 
 	try {
-		await request({
+		const response = await request({
 			url: getSubmitPositionUrl(),
 			method: 'POST',
 			header: {
@@ -432,6 +432,12 @@ async function submitUserPosition(wgs84) {
 				useragent: getUserAgentText()
 			})
 		})
+		const result = response && typeof response === 'object' && 'data' in response
+			? response.data
+			: null
+		if (result && typeof result === 'object' && result.warning) {
+			console.warn('位置已记录，但 IP 归属地暂不可用', result.warning)
+		}
 		lastSubmittedPosition.value = positionText
 	} catch (error) {
 		console.warn('定位信息上报失败', error)
