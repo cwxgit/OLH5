@@ -74,6 +74,103 @@
 								<text v-else class="place-search-message">没有找到匹配地点</text>
 							</view>
 						</view>
+
+						<view class="history-card">
+							<text class="history-title">位置历史与轨迹回放</text>
+							<text class="history-policy">
+								登录后可授权记录坐标和时间；每次至少间隔 30 秒且移动不少于 50 米。记录还包含请求 IP、设备信息和地址解析结果；仅本人可查看，撤回授权不会删除已有记录。
+							</text>
+							<checkbox-group @change="handleHistoryConsentChange">
+								<label class="history-consent">
+									<checkbox value="consent" :checked="historyConsentChecked" color="#0f766e" />
+									<text>我同意记录并保存本次使用期间的位置</text>
+								</label>
+							</checkbox-group>
+							<view class="history-actions">
+								<button
+									v-if="!trackingEnabled"
+									class="history-button"
+									:disabled="!historyConsentChecked"
+									@click="enableLocationTracking"
+								>
+									同意并开始记录
+								</button>
+								<button v-else class="history-button history-stop-button" @click="disableLocationTracking">
+									停止并撤回授权
+								</button>
+							</view>
+							<view class="history-filter">
+								<view class="history-range-row">
+									<text class="history-range-label">开始时间</text>
+									<picker
+										class="history-date-picker-wrap"
+										mode="date"
+										:value="historyStartDate"
+										@change="handleHistoryDateChange('start', $event)"
+									>
+										<view class="history-date-picker">
+											<text class="history-date-value">{{ historyStartDate }}</text>
+										</view>
+									</picker>
+									<picker
+										class="history-time-picker-wrap"
+										mode="time"
+										:value="historyStartTime"
+										@change="handleHistoryTimeChange('start', $event)"
+									>
+										<view class="history-date-picker">
+											<text class="history-date-value">{{ historyStartTime }}</text>
+										</view>
+									</picker>
+								</view>
+								<view class="history-range-row">
+									<text class="history-range-label">结束时间</text>
+									<picker
+										class="history-date-picker-wrap"
+										mode="date"
+										:value="historyEndDate"
+										@change="handleHistoryDateChange('end', $event)"
+									>
+										<view class="history-date-picker">
+											<text class="history-date-value">{{ historyEndDate }}</text>
+										</view>
+									</picker>
+									<picker
+										class="history-time-picker-wrap"
+										mode="time"
+										:value="historyEndTime"
+										@change="handleHistoryTimeChange('end', $event)"
+									>
+										<view class="history-date-picker">
+											<text class="history-date-value">{{ historyEndTime }}</text>
+										</view>
+									</picker>
+								</view>
+								<button class="history-button" :disabled="historyLoading" @click="loadPositionHistory">
+									{{ historyLoading ? '加载中…' : '查询轨迹' }}
+								</button>
+							</view>
+							<text v-if="historyError" class="place-search-message place-search-error">{{ historyError }}</text>
+							<view v-if="historyRecords.length" class="history-playback">
+								<view class="history-playback-actions">
+									<button class="history-button" @click="toggleHistoryPlayback">
+										{{ historyPlaying ? '暂停' : '播放轨迹' }}
+									</button>
+									<text class="history-playback-time">{{ currentHistoryTime }}</text>
+								</view>
+								<slider
+									class="history-slider"
+									:min="0"
+									:max="historyRecords.length - 1"
+									:value="historyPlaybackIndex"
+									:disabled="historyRecords.length < 2"
+									@changing="seekHistoryPlayback"
+									@change="seekHistoryPlayback"
+								/>
+								<text class="history-count">共 {{ historyRecords.length }} 个位置点</text>
+							</view>
+							<text v-else-if="historyLoaded" class="history-count">该日期没有可显示的位置记录</text>
+						</view>
 					</view>
 				</view>
 
@@ -105,6 +202,65 @@
 
 			<view class="map-panel">
 				<button v-if="!sidebarVisible" class="sidebar-toggle sidebar-toggle-floating" @click="toggleSidebar">显示控制栏</button>
+				<view class="measurement-tools">
+					<view class="measurement-buttons">
+						<button
+							class="measurement-button"
+							:class="{ active: measurementMode === 'distance' }"
+							@click="startMeasurement('distance')"
+						>
+							{{ measurementMode === 'distance' ? '退出测距' : '多点测距' }}
+						</button>
+						<button
+							class="measurement-button"
+							:class="{ active: measurementMode === 'area' }"
+							@click="startMeasurement('area')"
+						>
+							{{ measurementMode === 'area' ? '退出绘制' : '面积测量' }}
+						</button>
+						<button
+							class="measurement-button"
+							:class="{ active: measurementMode === 'circle' }"
+							@click="startMeasurement('circle')"
+						>
+							{{ measurementMode === 'circle' ? '退出圆形测量' : '圆形测量' }}
+						</button>
+						<button
+							v-if="measurements.length"
+							class="measurement-button measurement-clear"
+							@click="clearMeasurements"
+						>
+							清除
+						</button>
+					</view>
+					<text v-if="measurementMode" class="measurement-hint">
+						{{ measurementMode === 'distance'
+							? '左键依次添加节点，左键双击完成测距'
+							: measurementMode === 'circle'
+								? '左键点击圆心并移动鼠标预览半径，左键双击完成'
+								: '左键描绘区域，左键双击完成并闭合' }}
+					</text>
+					<view v-if="measurements.length" class="measurement-results">
+						<view
+							v-for="item in measurements"
+							:key="item.id"
+							class="measurement-result"
+							:class="{ 'circle-result': item.type === 'circle' }"
+						>
+							<template v-if="item.type === 'circle'">
+								<text class="measurement-result-label">周长</text>
+								<text class="measurement-result-value">{{ formatDistance(item.perimeter) }}</text>
+								<text class="measurement-result-label">面积</text>
+								<text class="measurement-result-value">{{ formatArea(item.area) }}</text>
+							</template>
+							<template v-else>
+								<text class="measurement-result-label">{{ item.type === 'distance' ? '距离' : '面积' }}</text>
+								<text class="measurement-result-value">{{ formatMeasurement(item) }}</text>
+							</template>
+							<text class="measurement-result-remove" @click="removeMeasurement(item.id)">×</text>
+						</view>
+					</view>
+				</view>
 				<view id="ol-map" class="map-canvas"></view>
 			</view>
 		</view>
@@ -121,12 +277,17 @@ import VectorLayer from 'ol/layer/Vector'
 import XYZ from 'ol/source/XYZ'
 import OSM from 'ol/source/OSM'
 import VectorSource from 'ol/source/Vector'
+import Draw from 'ol/interaction/Draw'
 import Feature from 'ol/Feature'
+import LineString from 'ol/geom/LineString'
 import Point from 'ol/geom/Point'
+import Polygon from 'ol/geom/Polygon'
 import CircleGeom from 'ol/geom/Circle'
 import { defaults as defaultControls, ScaleLine } from 'ol/control'
-import { Fill, Stroke, Style, Circle as CircleStyle } from 'ol/style'
+import { primaryAction } from 'ol/events/condition'
+import { Fill, Stroke, Style, Text, Circle as CircleStyle } from 'ol/style'
 import { fromLonLat, toLonLat } from 'ol/proj'
+import { getArea, getDistance, getLength, offset } from 'ol/sphere'
 import { ROOT_AREAS } from '../../utils/areas'
 import { gcj02ToWgs84, wgs84ToGcj02 } from '../../utils/coordTransform'
 
@@ -135,13 +296,15 @@ const DEFAULT_CENTER_ZOOM = 8
 const GEO_ZOOM = 16
 const AREA_ZOOMS = [6, 10, 14, 16, 18]
 const baseUrl = 'https://layers.cpxiang.tech/'
-const adminBaseUrl = 'http://oladmin.cc'
-const positionApiBaseUrl = import.meta.env.DEV ? '' : adminBaseUrl
+const adminBaseUrl = 'https://oladmin.cc'
+const positionApiBaseUrl = adminBaseUrl
 const loginUrl = adminBaseUrl + '/login'
 const registerUrl = adminBaseUrl + '/register'
 
 const mapRef = ref(null)
 const viewRef = ref(null)
+const measurementSourceRef = ref(null)
+const historySourceRef = ref(null)
 const sidebarVisible = ref(true)
 const positionFeatureRef = ref(null)
 const accuracyFeatureRef = ref(null)
@@ -153,7 +316,6 @@ const areaSearchHasSearched = ref(false)
 const areaSearchError = ref('')
 let areaSearchTimer = null
 let areaSearchRequestId = 0
-const lastSubmittedPosition = ref('')
 const markerSourceWgs84 = ref(null)
 const userLocationWgs84 = ref(null)
 const currentAccuracy = ref(0)
@@ -162,6 +324,28 @@ const locating = ref(false)
 const locationLabel = ref('')
 const activeLayerKey = ref('tengxun')
 const eesDisabledHint = ref(false)
+const measurementMode = ref('')
+const measurementInProgress = ref(false)
+const measurements = ref([])
+const historyConsentChecked = ref(false)
+const trackingEnabled = ref(false)
+const historyStartDate = ref(getLocalDate())
+const historyStartTime = ref('00:00')
+const historyEndDate = ref(getLocalDate())
+const historyEndTime = ref('23:59')
+const historyRecords = ref([])
+const historyPlaybackIndex = ref(0)
+const historyPlaying = ref(false)
+const historyLoading = ref(false)
+const historyLoaded = ref(false)
+const historyError = ref('')
+let measurementDrawInteraction = null
+let nextMeasurementId = 1
+let playbackTimer = null
+let historyPlaybackFeature = null
+let historySubmissionPending = false
+let lastHistorySample = null
+let positionConsentRequestId = 0
 
 const areaGroups = ref([
 	{
@@ -202,6 +386,19 @@ const geoButtonText = computed(() => {
 
 	return hasLocated.value ? '重新定位' : '定位到我的位置'
 })
+
+const currentHistoryTime = computed(() => {
+	const record = historyRecords.value[historyPlaybackIndex.value]
+	return record ? record.datetime : ''
+})
+
+function getLocalDate() {
+	const date = new Date()
+	const year = date.getFullYear()
+	const month = String(date.getMonth() + 1).padStart(2, '0')
+	const day = String(date.getDate()).padStart(2, '0')
+	return `${year}-${month}-${day}`
+}
 
 function areaLabel(index) {
 	const labels = ['省份', '地市', '区县', '乡镇', '村组']
@@ -319,12 +516,223 @@ function changeLayer(key) {
 	if (!targetLayer || targetLayer.disabled) {
 		return
 	}
+	if (measurementInProgress.value) {
+		uni.showToast({ title: '请先完成当前测量再切换图层', icon: 'none' })
+		return
+	}
 
 	const centerWgs84 = getMapCenterInWgs84()
 	activeLayerKey.value = key
 	setLayerVisible(key)
 	setMapCenterByWgs84(centerWgs84)
 	renderMarker()
+	renderMeasurements()
+	renderPositionHistory(false)
+}
+
+function mapCoordinateTree(coordinates, transform) {
+	if (!Array.isArray(coordinates)) {
+		return coordinates
+	}
+	if (typeof coordinates[0] === 'number') {
+		return transform(coordinates)
+	}
+	return coordinates.map((coordinate) => mapCoordinateTree(coordinate, transform))
+}
+
+function createMeasurementGeometry(type, coordinates) {
+	return type === 'distance'
+		? new LineString(coordinates)
+		: new Polygon(coordinates)
+}
+
+function renderMeasurements() {
+	if (!measurementSourceRef.value) {
+		return
+	}
+	const coordType = getLayerConfig().coordType
+	measurements.value.forEach((measurement) => {
+		const feature = measurementSourceRef.value.getFeatures().find(
+			(item) => item.get('measurementId') === measurement.id
+		)
+		if (!feature) {
+			return
+		}
+		const coordinates = mapCoordinateTree(measurement.coordinates, (coordinate) => {
+			return fromLonLat(encodeByCoordType(coordinate, coordType))
+		})
+		feature.setGeometry(createMeasurementGeometry(measurement.type, coordinates))
+	})
+}
+
+function createCircleCoordinates(center, radius) {
+	const segments = 96
+	const ring = []
+	for (let index = 0; index <= segments; index += 1) {
+		ring.push(offset(center, radius, (index / segments) * Math.PI * 2))
+	}
+	return [ring]
+}
+
+function stopMeasurement() {
+	if (measurementDrawInteraction) {
+		const interaction = measurementDrawInteraction
+		measurementDrawInteraction = null
+		interaction.setActive(false)
+		interaction.abortDrawing()
+		interaction.getOverlay().getSource().clear()
+		if (mapRef.value) {
+			mapRef.value.removeInteraction(interaction)
+		}
+	}
+	measurementMode.value = ''
+	measurementInProgress.value = false
+}
+
+function startMeasurement(type) {
+	if (!mapRef.value || !measurementSourceRef.value) {
+		uni.showToast({ title: '地图尚未准备好，请稍后重试', icon: 'none' })
+		return
+	}
+	if (measurementMode.value === type) {
+		stopMeasurement()
+		return
+	}
+	stopMeasurement()
+	measurementMode.value = type
+	measurementDrawInteraction = new Draw({
+		source: measurementSourceRef.value,
+		type: type === 'area' ? 'Polygon' : 'LineString',
+		condition: primaryAction,
+		geometryFunction: type === 'circle'
+			? (coordinates, geometry) => {
+				const center = coordinates[0]
+				const edge = coordinates[coordinates.length - 1]
+				const radius = Math.hypot(edge[0] - center[0], edge[1] - center[1])
+				if (geometry) {
+					geometry.setCenterAndRadius(center, radius)
+					return geometry
+				}
+				return new CircleGeom(center, radius)
+			}
+			: undefined
+	})
+	measurementDrawInteraction.on('drawstart', () => {
+		measurementInProgress.value = true
+	})
+	measurementDrawInteraction.on('drawabort', () => {
+		measurementInProgress.value = false
+	})
+	let measurementCompleted = false
+	measurementDrawInteraction.on('drawend', (event) => {
+		if (measurementCompleted) {
+			return
+		}
+		measurementCompleted = true
+		measurementInProgress.value = false
+		const coordType = getLayerConfig().coordType
+		const id = nextMeasurementId++
+		let coordinates
+		let measurement
+		if (type === 'circle') {
+			const circle = event.feature.getGeometry()
+			const center3857 = circle.getCenter()
+			const center = decodeByCoordType(toLonLat(center3857), coordType)
+			const edge = decodeByCoordType(
+				toLonLat([center3857[0] + circle.getRadius(), center3857[1]]),
+				coordType
+			)
+			const radius = getDistance(center, edge)
+			coordinates = createCircleCoordinates(center, radius)
+			measurement = {
+				id,
+				type,
+				coordinates,
+				perimeter: 2 * Math.PI * radius,
+				area: Math.PI * radius * radius
+			}
+		} else {
+			const geographicGeometry = event.feature.getGeometry().clone().transform('EPSG:3857', 'EPSG:4326')
+			coordinates = mapCoordinateTree(geographicGeometry.getCoordinates(), (coordinate) => {
+				return decodeByCoordType(coordinate, coordType)
+			})
+			const geometryWgs84 = createMeasurementGeometry(type, coordinates)
+			measurement = { id, type, coordinates }
+			if (type === 'distance') {
+				measurement.distance = getLength(geometryWgs84, { projection: 'EPSG:4326' })
+			} else {
+				measurement.area = getArea(geometryWgs84, { projection: 'EPSG:4326' })
+			}
+		}
+		measurements.value.push(measurement)
+
+		event.feature.set('measurementId', id)
+		event.feature.setStyle(new Style({
+			fill: new Fill({ color: 'rgba(255, 183, 3, 0.18)' }),
+			stroke: new Stroke({ color: '#f08c00', width: 3 }),
+			image: new CircleStyle({
+				radius: 5,
+				fill: new Fill({ color: '#f08c00' }),
+				stroke: new Stroke({ color: '#ffffff', width: 2 })
+			}),
+			text: new Text({
+				text: formatMeasurement(measurement),
+				font: '600 13px sans-serif',
+				fill: new Fill({ color: '#183153' }),
+				backgroundFill: new Fill({ color: 'rgba(255, 255, 255, 0.9)' }),
+				padding: [4, 6, 4, 6],
+				overflow: true
+			})
+		}))
+		event.feature.setGeometry(createMeasurementGeometry(
+			type,
+			mapCoordinateTree(coordinates, (coordinate) => {
+				return fromLonLat(encodeByCoordType(coordinate, coordType))
+			})
+		))
+		stopMeasurement()
+	})
+	mapRef.value.addInteraction(measurementDrawInteraction)
+}
+
+function formatMeasurement(measurement) {
+	if (measurement.type === 'distance') {
+		return formatDistance(measurement.distance)
+	}
+	if (measurement.type === 'circle') {
+		return `周长 ${formatDistance(measurement.perimeter)} / 面积 ${formatArea(measurement.area)}`
+	}
+	return formatArea(measurement.area)
+}
+
+function formatDistance(distance) {
+	return distance < 1000
+		? `${distance.toFixed(1)} 米`
+		: `${(distance / 1000).toFixed(3)} 千米`
+}
+
+function formatArea(area) {
+	return area < 1000000
+		? `${area.toFixed(1)} 平方米`
+		: `${(area / 1000000).toFixed(3)} 平方千米`
+}
+
+function removeMeasurement(id) {
+	const feature = measurementSourceRef.value && measurementSourceRef.value.getFeatures().find(
+		(item) => item.get('measurementId') === id
+	)
+	if (feature) {
+		measurementSourceRef.value.removeFeature(feature)
+	}
+	measurements.value = measurements.value.filter((item) => item.id !== id)
+}
+
+function clearMeasurements() {
+	stopMeasurement()
+	if (measurementSourceRef.value) {
+		measurementSourceRef.value.clear(true)
+	}
+	measurements.value = []
 }
 
 function toggleSidebar() {
@@ -370,11 +778,20 @@ function getSubmitPositionUrl() {
 	return `${positionApiBaseUrl}/admin/position/insert`
 }
 
+function getPositionHistoryUrl(start, end) {
+	return `${positionApiBaseUrl}/admin/position/history?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`
+}
+
+function getPositionConsentUrl() {
+	return `${positionApiBaseUrl}/admin/position/consent`
+}
+
 function request(options) {
 	return new Promise((resolve, reject) => {
 		uni.request({
 			...options,
 			url: resolveAppUrl(options.url),
+			withCredentials: true,
 			success: (response) => {
 				if (response.statusCode < 200 || response.statusCode >= 300) {
 					const data = response.data
@@ -389,6 +806,266 @@ function request(options) {
 			fail: reject
 		})
 	})
+}
+
+async function updatePositionConsent(action) {
+	const response = await request({
+		url: getPositionConsentUrl(),
+		method: 'POST',
+		header: { 'content-type': 'application/x-www-form-urlencoded' },
+		data: buildFormBody({ action })
+	})
+	const payload = response && typeof response === 'object' && 'data' in response
+		? response.data
+		: null
+	if (!payload || payload.success !== true) {
+		throw new Error(payload && payload.message ? payload.message : '位置授权操作失败')
+	}
+}
+
+function handleHistoryConsentChange(event) {
+	const consented = event.detail.value.includes('consent')
+	if (!consented && trackingEnabled.value) {
+		disableLocationTracking()
+		return
+	}
+	historyConsentChecked.value = consented
+}
+
+function handleHistoryDateChange(boundary, event) {
+	const date = String(event.detail.value || '')
+	if (boundary === 'start') {
+		historyStartDate.value = date
+		return
+	}
+	historyEndDate.value = date
+}
+
+function handleHistoryTimeChange(boundary, event) {
+	const time = String(event.detail.value || '')
+	if (boundary === 'start') {
+		historyStartTime.value = time
+		return
+	}
+	historyEndTime.value = time
+}
+
+async function enableLocationTracking() {
+	if (!historyConsentChecked.value) {
+		return
+	}
+	if (typeof navigator === 'undefined' || !navigator.geolocation) {
+		uni.showToast({ title: '当前环境不支持定位', icon: 'none' })
+		return
+	}
+	const requestId = ++positionConsentRequestId
+	try {
+		await updatePositionConsent('grant')
+		if (requestId !== positionConsentRequestId || !historyConsentChecked.value) {
+			await updatePositionConsent('revoke')
+			return
+		}
+		trackingEnabled.value = true
+		startLocationTracking()
+		locateMe()
+	} catch (error) {
+		historyConsentChecked.value = false
+		uni.showToast({ title: error && error.message ? error.message : '请登录后授权记录位置', icon: 'none' })
+	}
+}
+
+async function disableLocationTracking(showError = true) {
+	const wasTracking = trackingEnabled.value
+	positionConsentRequestId += 1
+	trackingEnabled.value = false
+	historyConsentChecked.value = false
+	if (typeof navigator !== 'undefined' && navigator.geolocation && geolocationWatchId.value !== null) {
+		navigator.geolocation.clearWatch(geolocationWatchId.value)
+		geolocationWatchId.value = null
+	}
+	if (!wasTracking) {
+		return
+	}
+	try {
+		await updatePositionConsent('revoke')
+	} catch (error) {
+		if (showError) {
+			uni.showToast({ title: '本机已停止记录，但服务器撤回授权失败', icon: 'none' })
+		} else {
+			console.warn('撤回位置记录授权失败', error)
+		}
+	}
+}
+
+async function loadPositionHistory() {
+	const start = `${historyStartDate.value} ${historyStartTime.value}`
+	const end = `${historyEndDate.value} ${historyEndTime.value}`
+	if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(start)
+		|| !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(end)
+		|| start > end) {
+		historyError.value = '请选择有效的开始和结束日期时间'
+		return
+	}
+	historyLoading.value = true
+	historyLoaded.value = false
+	historyError.value = ''
+	stopHistoryPlayback()
+	try {
+		const response = await request({
+			url: getPositionHistoryUrl(start, end),
+			method: 'GET'
+		})
+		const payload = response && typeof response === 'object' && 'data' in response
+			? response.data
+			: null
+		if (!payload || payload.success !== true || !Array.isArray(payload.items)) {
+			throw new Error(payload && payload.message ? payload.message : '轨迹数据格式无效')
+		}
+		historyRecords.value = payload.items
+			.filter((item) => item && typeof item.position === 'string' && typeof item.datetime === 'string')
+			.map((item) => {
+				const parts = item.position.split(',').map((part) => Number(part.trim()))
+				if (parts.length !== 2 || !parts.every(Number.isFinite)) {
+					return null
+				}
+				return {
+					id: item.id,
+					datetime: item.datetime,
+					coordinate: gcj02ToWgs84(parts[0], parts[1])
+				}
+			})
+			.filter(Boolean)
+		historyPlaybackIndex.value = 0
+		historyLoaded.value = true
+		renderPositionHistory()
+		if (payload.truncated) {
+			historyError.value = '记录较多，仅显示最早的 5000 个位置点'
+		}
+	} catch (error) {
+		historyRecords.value = []
+		if (historySourceRef.value) {
+			historySourceRef.value.clear(true)
+		}
+		historyError.value = error && error.message ? error.message : '轨迹加载失败'
+	} finally {
+		historyLoading.value = false
+	}
+}
+
+function renderPositionHistory(fitMap = true) {
+	if (!historySourceRef.value) {
+		return
+	}
+	historySourceRef.value.clear(true)
+	historyPlaybackFeature = null
+	if (!historyRecords.value.length) {
+		return
+	}
+
+	const coordType = getLayerConfig().coordType
+	const mapCoordinate = (coordinate) => fromLonLat(encodeByCoordType(coordinate, coordType))
+	const coordinates = historyRecords.value.map((record) => mapCoordinate(record.coordinate))
+
+	if (coordinates.length > 1) {
+		const line = new Feature(new LineString(coordinates))
+		line.setStyle(new Style({
+			stroke: new Stroke({ color: '#1677ff', width: 4 })
+		}))
+		historySourceRef.value.addFeature(line)
+	}
+
+	const pointStyle = new Style({
+		image: new CircleStyle({
+			radius: 4,
+			fill: new Fill({ color: '#ffffff' }),
+			stroke: new Stroke({ color: '#1677ff', width: 2 })
+		})
+	})
+	coordinates.forEach((coordinate) => {
+		const point = new Feature(new Point(coordinate))
+		point.setStyle(pointStyle)
+		historySourceRef.value.addFeature(point)
+	})
+
+	historyPlaybackFeature = new Feature(new Point(coordinates[0]))
+	historyPlaybackFeature.setStyle(new Style({
+		image: new CircleStyle({
+			radius: 8,
+			fill: new Fill({ color: '#e5484d' }),
+			stroke: new Stroke({ color: '#ffffff', width: 3 })
+		}),
+		text: new Text({
+			text: historyRecords.value[0].datetime,
+			offsetY: -18,
+			font: '600 12px sans-serif',
+			fill: new Fill({ color: '#183153' }),
+			backgroundFill: new Fill({ color: 'rgba(255,255,255,0.9)' }),
+			padding: [3, 5, 3, 5]
+		})
+	}))
+	historySourceRef.value.addFeature(historyPlaybackFeature)
+	setHistoryPlaybackIndex(historyPlaybackIndex.value)
+	if (fitMap && coordinates.length > 1) {
+		mapRef.value.getView().fit(new LineString(coordinates).getExtent(), {
+			padding: [60, 60, 60, 60],
+			maxZoom: 16,
+			duration: 300
+		})
+	}
+}
+
+function setHistoryPlaybackIndex(value, recenter = false) {
+	if (!historyRecords.value.length) {
+		return
+	}
+	const index = Math.max(0, Math.min(historyRecords.value.length - 1, Math.round(Number(value) || 0)))
+	historyPlaybackIndex.value = index
+	const record = historyRecords.value[index]
+	if (!record || !historyPlaybackFeature) {
+		return
+	}
+	const coordType = getLayerConfig().coordType
+	const coordinate = fromLonLat(encodeByCoordType(record.coordinate, coordType))
+	historyPlaybackFeature.getGeometry().setCoordinates(coordinate)
+	historyPlaybackFeature.getStyle().getText().setText(record.datetime)
+	if (recenter && viewRef.value) {
+		viewRef.value.animate({ center: coordinate, duration: 250 })
+	}
+}
+
+function seekHistoryPlayback(event) {
+	stopHistoryPlayback()
+	setHistoryPlaybackIndex(event.detail.value, true)
+}
+
+function toggleHistoryPlayback() {
+	if (historyPlaying.value) {
+		stopHistoryPlayback()
+		return
+	}
+	if (historyRecords.value.length < 2) {
+		return
+	}
+	if (historyPlaybackIndex.value >= historyRecords.value.length - 1) {
+		setHistoryPlaybackIndex(0, true)
+	}
+	historyPlaying.value = true
+	playbackTimer = setInterval(() => {
+		const nextIndex = historyPlaybackIndex.value + 1
+		if (nextIndex >= historyRecords.value.length) {
+			stopHistoryPlayback()
+			return
+		}
+		setHistoryPlaybackIndex(nextIndex, true)
+	}, 1000)
+}
+
+function stopHistoryPlayback() {
+	if (playbackTimer !== null) {
+		clearInterval(playbackTimer)
+		playbackTimer = null
+	}
+	historyPlaying.value = false
 }
 
 function getUserAgentText() {
@@ -414,12 +1091,22 @@ function getUserAgentText() {
 }
 
 async function submitUserPosition(wgs84) {
-	const gcj02 = wgs84ToGcj02(wgs84[0], wgs84[1])
-	const positionText = `${roundCoord(gcj02[0])},${roundCoord(gcj02[1])}`
-	if (lastSubmittedPosition.value === positionText) {
+	if (!trackingEnabled.value || historySubmissionPending) {
 		return
 	}
+	const sampleTime = Date.now()
+	if (lastHistorySample) {
+		const elapsed = sampleTime - lastHistorySample.time
+		const distance = getDistance(lastHistorySample.coordinate, wgs84)
+		if (elapsed < 30000 || distance < 50) {
+			return
+		}
+	}
 
+	const gcj02 = wgs84ToGcj02(wgs84[0], wgs84[1])
+	const positionText = `${roundCoord(gcj02[0])},${roundCoord(gcj02[1])}`
+
+	historySubmissionPending = true
 	try {
 		const response = await request({
 			url: getSubmitPositionUrl(),
@@ -435,12 +1122,23 @@ async function submitUserPosition(wgs84) {
 		const result = response && typeof response === 'object' && 'data' in response
 			? response.data
 			: null
+		if (!result || result.success !== true) {
+			throw new Error(result && result.message ? result.message : '位置记录失败')
+		}
+		if (result && typeof result === 'object' && result.sampled === false) {
+			lastHistorySample = { coordinate: wgs84, time: sampleTime }
+			return
+		}
 		if (result && typeof result === 'object' && result.warning) {
 			console.warn('位置已记录，但 IP 归属地暂不可用', result.warning)
 		}
-		lastSubmittedPosition.value = positionText
+		lastHistorySample = { coordinate: wgs84, time: sampleTime }
 	} catch (error) {
 		console.warn('定位信息上报失败', error)
+		disableLocationTracking()
+		uni.showToast({ title: error && error.message ? error.message : '位置记录失败', icon: 'none' })
+	} finally {
+		historySubmissionPending = false
 	}
 }
 
@@ -648,7 +1346,9 @@ async function handleGeolocationSuccess(position, keepCurrentZoom = false) {
 	locationLabel.value = `定位成功 ${roundCoord(wgs84[0], 4)}, ${roundCoord(wgs84[1], 4)}`
 	setMapCenterByWgs84(wgs84, keepCurrentZoom && viewRef.value ? viewRef.value.getZoom() : GEO_ZOOM)
 	renderMarker()
-	await submitUserPosition(wgs84)
+	if (trackingEnabled.value) {
+		await submitUserPosition(wgs84)
+	}
 }
 
 function startLocationTracking() {
@@ -683,7 +1383,6 @@ function locateMe() {
 		return
 	}
 
-	startLocationTracking()
 	locating.value = true
 	navigator.geolocation.getCurrentPosition(
 		async (position) => {
@@ -799,9 +1498,18 @@ async function initMap() {
 	})
 	overlayLayer.set('role', 'overlay')
 
+	const measurementSource = new VectorSource()
+	const measurementLayer = new VectorLayer({ source: measurementSource })
+	measurementLayer.set('role', 'measurement')
+	const historySource = new VectorSource()
+	const historyLayer = new VectorLayer({ source: historySource })
+	historyLayer.set('role', 'history')
+
 	positionFeatureRef.value = positionFeature
 	accuracyFeatureRef.value = accuracyFeature
-	markerSourceWgs84.value = DEFAULT_CENTER
+	measurementSourceRef.value = measurementSource
+	historySourceRef.value = historySource
+	markerSourceWgs84.value = null
 
 	viewRef.value = new View({
 		center: fromLonLat(center),
@@ -812,7 +1520,7 @@ async function initMap() {
 
 	mapRef.value = new Map({
 		target: 'ol-map',
-		layers: buildBaseLayers().concat(overlayLayer),
+		layers: buildBaseLayers().concat(overlayLayer, historyLayer, measurementLayer),
 		view: viewRef.value,
 		controls: defaultControls().extend([
 			new ScaleLine({ units: 'metric' })
@@ -825,7 +1533,6 @@ async function initMap() {
 
 	renderMarker()
 	updateLayerAvailability()
-	locateMe()
 	}
 
 onMounted(() => {
@@ -838,15 +1545,16 @@ onBeforeUnmount(() => {
 		areaSearchTimer = null
 	}
 	areaSearchRequestId += 1
-	if (typeof navigator !== 'undefined' && navigator.geolocation && geolocationWatchId.value !== null) {
-		navigator.geolocation.clearWatch(geolocationWatchId.value)
-		geolocationWatchId.value = null
-	}
+	disableLocationTracking(false)
+	stopHistoryPlayback()
+	stopMeasurement()
 	if (mapRef.value) {
 		mapRef.value.setTarget(undefined)
 	}
 	positionFeatureRef.value = null
 	accuracyFeatureRef.value = null
+	measurementSourceRef.value = null
+	historySourceRef.value = null
 })
 </script>
 
@@ -1079,6 +1787,156 @@ onBeforeUnmount(() => {
 	color: #b42318;
 }
 
+.history-card {
+	margin-top: 18rpx;
+	padding: 20rpx;
+	border: 2rpx solid rgba(15, 118, 110, 0.16);
+	border-radius: 20rpx;
+	background: rgba(15, 118, 110, 0.05);
+}
+
+.history-title,
+.history-policy,
+.history-count {
+	display: block;
+}
+
+.history-title {
+	font-size: 28rpx;
+	font-weight: 700;
+	color: #243b53;
+}
+
+.history-policy {
+	margin-top: 8rpx;
+	font-size: 22rpx;
+	line-height: 1.55;
+	color: #52606d;
+}
+
+.history-consent {
+	display: flex;
+	align-items: center;
+	gap: 8rpx;
+	margin-top: 12rpx;
+	font-size: 22rpx;
+	line-height: 1.5;
+	color: #243b53;
+}
+
+.history-consent checkbox {
+	transform: scale(0.8);
+}
+
+.history-actions,
+.history-filter,
+.history-playback-actions {
+	display: flex;
+	align-items: center;
+	gap: 10rpx;
+	margin-top: 12rpx;
+}
+
+.history-filter {
+	flex-direction: column;
+	align-items: stretch;
+}
+
+.history-range-row {
+	display: flex;
+	align-items: center;
+	gap: 8rpx;
+}
+
+.history-range-label {
+	flex: none;
+	width: 100rpx;
+	font-size: 21rpx;
+	color: #627d98;
+}
+
+.history-date-picker-wrap {
+	flex: 1;
+	min-width: 0;
+}
+
+.history-time-picker-wrap {
+	flex: none;
+	width: 112rpx;
+}
+
+.history-date-picker {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8rpx;
+	box-sizing: border-box;
+	height: 68rpx;
+	padding: 0 16rpx;
+	border: 1rpx solid #d9e2ec;
+	border-radius: 14rpx;
+	background: #ffffff;
+}
+
+.history-date-value {
+	flex: 1;
+	min-width: 0;
+	text-align: center;
+	font-size: 22rpx;
+	color: #243b53;
+}
+
+.history-button {
+	flex: none;
+	margin: 0;
+	padding: 0 16rpx;
+	height: 68rpx;
+	line-height: 68rpx;
+	border: 0;
+	border-radius: 14rpx;
+	background: #0f766e;
+	color: #ffffff;
+	font-size: 22rpx;
+}
+
+.history-button::after {
+	border: 0;
+}
+
+.history-button[disabled] {
+	opacity: 0.45;
+}
+
+.history-stop-button {
+	background: #9f3a38;
+}
+
+.history-playback {
+	margin-top: 12rpx;
+	padding-top: 10rpx;
+	border-top: 1rpx solid rgba(36, 59, 83, 0.12);
+}
+
+.history-playback-actions {
+	justify-content: space-between;
+}
+
+.history-playback-time {
+	min-width: 0;
+	font-size: 22rpx;
+	font-weight: 600;
+	color: #243b53;
+}
+
+.history-slider {
+	margin: 4rpx 0;
+}
+
+.history-count {
+	font-size: 21rpx;
+	color: #52606d;
+}
+
 .select-grid {
 	display: grid;
 	grid-template-columns: minmax(0, 1fr);
@@ -1131,6 +1989,103 @@ onBeforeUnmount(() => {
 .map-canvas {
 	width: 100%;
 	height: 100%;
+}
+
+.measurement-tools {
+	position: absolute;
+	z-index: 3;
+	top: 12px;
+	right: 12px;
+	box-sizing: border-box;
+	width: min(340px, calc(100% - 24px));
+	max-height: calc(100% - 24px);
+	padding: 10px;
+	border: 1px solid rgba(24, 49, 83, 0.12);
+	border-radius: 12px;
+	background: rgba(255, 253, 250, 0.94);
+	box-shadow: 0 8px 24px rgba(24, 49, 83, 0.18);
+	backdrop-filter: blur(8px);
+}
+
+.measurement-buttons {
+	display: flex;
+	gap: 6px;
+	flex-wrap: wrap;
+}
+
+.measurement-button {
+	margin: 0;
+	padding: 0 10px;
+	height: 34px;
+	line-height: 34px;
+	border: 0;
+	border-radius: 8px;
+	background: #e8edf2;
+	color: #243b53;
+	font-size: 12px;
+}
+
+.measurement-button::after {
+	border: 0;
+}
+
+.measurement-button.active {
+	background: #0f766e;
+	color: #ffffff;
+}
+
+.measurement-button.measurement-clear {
+	margin-left: auto;
+	background: #fff0ed;
+	color: #b42318;
+}
+
+.measurement-hint {
+	display: block;
+	margin-top: 8px;
+	font-size: 12px;
+	line-height: 1.5;
+	color: #52606d;
+}
+
+.measurement-results {
+	max-height: 180px;
+	margin-top: 8px;
+	overflow-y: auto;
+	border-top: 1px solid rgba(36, 59, 83, 0.12);
+}
+
+.measurement-result {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 2px 2px;
+	font-size: 12px;
+}
+
+.measurement-result.circle-result {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr) auto;
+}
+
+.measurement-result-label {
+	flex: none;
+	color: #52606d;
+}
+
+.measurement-result-value {
+	flex: 1;
+	min-width: 0;
+	font-weight: 600;
+	color: #183153;
+}
+
+.measurement-result-remove {
+	flex: none;
+	padding: 0 4px;
+	color: #b42318;
+	font-size: 18px;
+	line-height: 1;
 }
 
 .layer-panel {
