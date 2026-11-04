@@ -78,27 +78,8 @@
 						<view class="history-card">
 							<text class="history-title">位置历史与轨迹回放</text>
 							<text class="history-policy">
-								登录后可授权记录坐标和时间；每次至少间隔 30 秒且移动不少于 50 米。记录还包含请求 IP、设备信息和地址解析结果；仅本人可查看，撤回授权不会删除已有记录。
+								页面打开且定位成功后会自动记录位置，请确定浏览器会按系统设置请求定位权限。
 							</text>
-							<checkbox-group @change="handleHistoryConsentChange">
-								<label class="history-consent">
-									<checkbox value="consent" :checked="historyConsentChecked" color="#0f766e" />
-									<text>我同意记录并保存本次使用期间的位置</text>
-								</label>
-							</checkbox-group>
-							<view class="history-actions">
-								<button
-									v-if="!trackingEnabled"
-									class="history-button"
-									:disabled="!historyConsentChecked"
-									@click="enableLocationTracking"
-								>
-									同意并开始记录
-								</button>
-								<button v-else class="history-button history-stop-button" @click="disableLocationTracking">
-									停止并撤回授权
-								</button>
-							</view>
 							<view class="history-filter">
 								<view class="history-range-row">
 									<text class="history-range-label">开始时间</text>
@@ -295,7 +276,6 @@ const DEFAULT_CENTER = [116.405285, 39.904989]
 const DEFAULT_CENTER_ZOOM = 8
 const GEO_ZOOM = 16
 const AREA_ZOOMS = [6, 10, 14, 16, 18]
-const baseUrl = 'https://layers.cpxiang.tech/'
 const adminBaseUrl = 'https://oladmin.cc'
 const positionApiBaseUrl = adminBaseUrl
 const loginUrl = adminBaseUrl + '/login'
@@ -327,7 +307,6 @@ const eesDisabledHint = ref(false)
 const measurementMode = ref('')
 const measurementInProgress = ref(false)
 const measurements = ref([])
-const historyConsentChecked = ref(false)
 const trackingEnabled = ref(false)
 const historyStartDate = ref(getLocalDate())
 const historyStartTime = ref('00:00')
@@ -344,8 +323,6 @@ let nextMeasurementId = 1
 let playbackTimer = null
 let historyPlaybackFeature = null
 let historySubmissionPending = false
-let lastHistorySample = null
-let positionConsentRequestId = 0
 
 const areaGroups = ref([
 	{
@@ -782,10 +759,6 @@ function getPositionHistoryUrl(start, end) {
 	return `${positionApiBaseUrl}/admin/position/history?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`
 }
 
-function getPositionConsentUrl() {
-	return `${positionApiBaseUrl}/admin/position/consent`
-}
-
 function request(options) {
 	return new Promise((resolve, reject) => {
 		uni.request({
@@ -808,30 +781,6 @@ function request(options) {
 	})
 }
 
-async function updatePositionConsent(action) {
-	const response = await request({
-		url: getPositionConsentUrl(),
-		method: 'POST',
-		header: { 'content-type': 'application/x-www-form-urlencoded' },
-		data: buildFormBody({ action })
-	})
-	const payload = response && typeof response === 'object' && 'data' in response
-		? response.data
-		: null
-	if (!payload || payload.success !== true) {
-		throw new Error(payload && payload.message ? payload.message : '位置授权操作失败')
-	}
-}
-
-function handleHistoryConsentChange(event) {
-	const consented = event.detail.value.includes('consent')
-	if (!consented && trackingEnabled.value) {
-		disableLocationTracking()
-		return
-	}
-	historyConsentChecked.value = consented
-}
-
 function handleHistoryDateChange(boundary, event) {
 	const date = String(event.detail.value || '')
 	if (boundary === 'start') {
@@ -850,50 +799,24 @@ function handleHistoryTimeChange(boundary, event) {
 	historyEndTime.value = time
 }
 
-async function enableLocationTracking() {
-	if (!historyConsentChecked.value) {
-		return
-	}
+function startPositionTracking() {
 	if (typeof navigator === 'undefined' || !navigator.geolocation) {
 		uni.showToast({ title: '当前环境不支持定位', icon: 'none' })
 		return
 	}
-	const requestId = ++positionConsentRequestId
-	try {
-		await updatePositionConsent('grant')
-		if (requestId !== positionConsentRequestId || !historyConsentChecked.value) {
-			await updatePositionConsent('revoke')
-			return
-		}
-		trackingEnabled.value = true
-		startLocationTracking()
-		locateMe()
-	} catch (error) {
-		historyConsentChecked.value = false
-		uni.showToast({ title: error && error.message ? error.message : '请登录后授权记录位置', icon: 'none' })
+	trackingEnabled.value = true
+	if (!startLocationTracking()) {
+		trackingEnabled.value = false
+		uni.showToast({ title: '无法启动持续定位', icon: 'none' })
+		return
 	}
 }
 
-async function disableLocationTracking(showError = true) {
-	const wasTracking = trackingEnabled.value
-	positionConsentRequestId += 1
+function disableLocationTracking() {
 	trackingEnabled.value = false
-	historyConsentChecked.value = false
 	if (typeof navigator !== 'undefined' && navigator.geolocation && geolocationWatchId.value !== null) {
 		navigator.geolocation.clearWatch(geolocationWatchId.value)
 		geolocationWatchId.value = null
-	}
-	if (!wasTracking) {
-		return
-	}
-	try {
-		await updatePositionConsent('revoke')
-	} catch (error) {
-		if (showError) {
-			uni.showToast({ title: '本机已停止记录，但服务器撤回授权失败', icon: 'none' })
-		} else {
-			console.warn('撤回位置记录授权失败', error)
-		}
 	}
 }
 
@@ -1094,14 +1017,6 @@ async function submitUserPosition(wgs84) {
 	if (!trackingEnabled.value || historySubmissionPending) {
 		return
 	}
-	const sampleTime = Date.now()
-	if (lastHistorySample) {
-		const elapsed = sampleTime - lastHistorySample.time
-		const distance = getDistance(lastHistorySample.coordinate, wgs84)
-		if (elapsed < 30000 || distance < 50) {
-			return
-		}
-	}
 
 	const gcj02 = wgs84ToGcj02(wgs84[0], wgs84[1])
 	const positionText = `${roundCoord(gcj02[0])},${roundCoord(gcj02[1])}`
@@ -1125,14 +1040,9 @@ async function submitUserPosition(wgs84) {
 		if (!result || result.success !== true) {
 			throw new Error(result && result.message ? result.message : '位置记录失败')
 		}
-		if (result && typeof result === 'object' && result.sampled === false) {
-			lastHistorySample = { coordinate: wgs84, time: sampleTime }
-			return
-		}
 		if (result && typeof result === 'object' && result.warning) {
-			console.warn('位置已记录，但 IP 归属地暂不可用', result.warning)
+			console.warn('位置坐标已记录，但部分地址信息不可用', result.warning)
 		}
-		lastHistorySample = { coordinate: wgs84, time: sampleTime }
 	} catch (error) {
 		console.warn('定位信息上报失败', error)
 		disableLocationTracking()
@@ -1537,6 +1447,7 @@ async function initMap() {
 
 onMounted(() => {
 	initMap()
+	startPositionTracking()
 })
 
 onBeforeUnmount(() => {
@@ -1545,7 +1456,7 @@ onBeforeUnmount(() => {
 		areaSearchTimer = null
 	}
 	areaSearchRequestId += 1
-	disableLocationTracking(false)
+	disableLocationTracking()
 	stopHistoryPlayback()
 	stopMeasurement()
 	if (mapRef.value) {
@@ -1828,7 +1739,6 @@ onBeforeUnmount(() => {
 	transform: scale(0.8);
 }
 
-.history-actions,
 .history-filter,
 .history-playback-actions {
 	display: flex;
