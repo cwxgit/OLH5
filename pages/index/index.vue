@@ -2,7 +2,7 @@
 	<view class="page-shell">
 		<view class="workspace-layout" :class="{ 'sidebar-collapsed': !sidebarVisible }">
 			<view class="sidebar-panel">
-				<button class="sidebar-toggle" @click="toggleSidebar">隐藏控制栏</button>
+				<button class="sidebar-toggle" @click="toggleSidebar">隐藏控制栏全屏显示地图</button>
 				<view class="hero-panel">
 					<view class="hero-copy">
 						<text class="eyebrow">OLH5 / Vue3 + OpenLayers</text>
@@ -158,7 +158,6 @@
 				<view class="layer-panel">
 					<view class="layer-panel-head">
 						<text class="layer-title">底图切换</text>
-						<text class="layer-subtitle">与 PC 站点保持一致</text>
 					</view>
 					<view class="layer-list">
 						<view
@@ -1497,7 +1496,7 @@ onBeforeUnmount(() => {
 }
 
 .sidebar-toggle {
-	display: none;
+	display: block;
 	align-self: flex-end;
 	box-sizing: border-box;
 	width: 100%;
@@ -1725,20 +1724,6 @@ onBeforeUnmount(() => {
 	color: #52606d;
 }
 
-.history-consent {
-	display: flex;
-	align-items: center;
-	gap: 8rpx;
-	margin-top: 12rpx;
-	font-size: 22rpx;
-	line-height: 1.5;
-	color: #243b53;
-}
-
-.history-consent checkbox {
-	transform: scale(0.8);
-}
-
 .history-filter,
 .history-playback-actions {
 	display: flex;
@@ -1896,6 +1881,28 @@ onBeforeUnmount(() => {
 	width: auto;
 }
 
+.workspace-layout.sidebar-collapsed {
+	position: fixed;
+	inset: 0;
+	z-index: 20;
+	height: 100vh;
+	height: 100dvh;
+	grid-template-columns: minmax(0, 1fr);
+	grid-template-rows: minmax(0, 1fr);
+	gap: 0;
+}
+
+.workspace-layout.sidebar-collapsed .sidebar-panel {
+	display: none;
+}
+
+.workspace-layout.sidebar-collapsed .map-panel {
+	grid-column: 1;
+	height: 100%;
+	min-height: 0;
+	border-radius: 0;
+}
+
 .map-canvas {
 	width: 100%;
 	height: 100%;
@@ -2008,7 +2015,7 @@ onBeforeUnmount(() => {
 
 .layer-list {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr);
+	grid-template-columns: repeat(2, minmax(0, 1fr));
 	gap: 8px;
 }
 
@@ -2020,13 +2027,6 @@ onBeforeUnmount(() => {
 	display: block;
 	font-size: 30rpx;
 	font-weight: 700;
-}
-
-.layer-subtitle {
-	display: block;
-	margin-top: 6rpx;
-	font-size: 22rpx;
-	color: rgba(255, 255, 255, 0.72);
 }
 
 .layer-item {
@@ -2163,6 +2163,20 @@ onBeforeUnmount(() => {
 		height: auto;
 		min-height: 580px;
 		grid-column: auto;
+	}
+
+	.workspace-layout.sidebar-collapsed {
+		position: static;
+		inset: auto;
+		height: auto;
+		grid-template-rows: auto;
+		gap: 24px;
+	}
+
+	.workspace-layout.sidebar-collapsed .map-panel {
+		height: auto;
+		min-height: 580px;
+		border-radius: 30rpx;
 	}
 
 	.layer-panel {
