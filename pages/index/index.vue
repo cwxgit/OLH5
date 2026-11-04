@@ -857,6 +857,20 @@ async function loadPositionHistory() {
 				}
 			})
 			.filter(Boolean)
+			.map((record, index, records) => {
+				if (index === 0) {
+					return { ...record, speedKmh: null }
+				}
+				const previousRecord = records[index - 1]
+				const elapsedSeconds = (
+					Date.parse(record.datetime.replace(' ', 'T'))
+					- Date.parse(previousRecord.datetime.replace(' ', 'T'))
+				) / 1000
+				const speedKmh = elapsedSeconds > 0
+					? getDistance(previousRecord.coordinate, record.coordinate) / elapsedSeconds * 3.6
+					: null
+				return { ...record, speedKmh: Number.isFinite(speedKmh) ? speedKmh : null }
+			})
 		historyPlaybackIndex.value = 0
 		historyLoaded.value = true
 		renderPositionHistory()
@@ -917,7 +931,7 @@ function renderPositionHistory(fitMap = true) {
 			stroke: new Stroke({ color: '#ffffff', width: 3 })
 		}),
 		text: new Text({
-			text: historyRecords.value[0].datetime,
+			text: formatHistoryPlaybackLabel(historyRecords.value[0]),
 			offsetY: -18,
 			font: '600 12px sans-serif',
 			fill: new Fill({ color: '#183153' }),
@@ -949,10 +963,15 @@ function setHistoryPlaybackIndex(value, recenter = false) {
 	const coordType = getLayerConfig().coordType
 	const coordinate = fromLonLat(encodeByCoordType(record.coordinate, coordType))
 	historyPlaybackFeature.getGeometry().setCoordinates(coordinate)
-	historyPlaybackFeature.getStyle().getText().setText(record.datetime)
+	historyPlaybackFeature.getStyle().getText().setText(formatHistoryPlaybackLabel(record))
 	if (recenter && viewRef.value) {
 		viewRef.value.animate({ center: coordinate, duration: 250 })
 	}
+}
+
+function formatHistoryPlaybackLabel(record) {
+	const speed = record.speedKmh === null ? '--' : `${record.speedKmh.toFixed(1)} km/h`
+	return `${record.datetime}\n速度：${speed}`
 }
 
 function seekHistoryPlayback(event) {
