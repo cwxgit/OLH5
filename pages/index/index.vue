@@ -1876,8 +1876,8 @@ onBeforeUnmount(() => {
 .sidebar-toggle-floating {
 	position: absolute;
 	z-index: 2;
-	top: 12px;
-	left: 12px;
+	right: 12px;
+	bottom: 12px;
 	width: auto;
 }
 
@@ -2149,6 +2149,10 @@ onBeforeUnmount(() => {
 
 	.sidebar-toggle-floating {
 		display: block;
+		top: 12px;
+		right: auto;
+		bottom: auto;
+		left: 12px;
 	}
 
 	.hero-panel {
