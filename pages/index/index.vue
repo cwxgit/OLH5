@@ -64,6 +64,45 @@
 							</button>
 							<button v-if="routeOptions.length" class="route-clear-button" @click="clearRoute">清除路线</button>
 						</view>
+						<view v-if="routeOptions.length" class="navigation-card">
+							<view v-if="!navigationActive" class="navigation-actions">
+								<button class="navigation-button" :disabled="!hasLocated" @click="startNavigation">
+									开始导航
+								</button>
+								<text class="navigation-note">需要允许定位并保持页面开启</text>
+							</view>
+							<template v-else>
+								<view class="navigation-head">
+									<text class="navigation-status">{{ navigationStatus }}</text>
+									<view class="navigation-actions">
+										<button
+											v-if="navigationVoiceAvailable"
+											class="navigation-voice-button"
+											@click="toggleNavigationVoice"
+										>
+											{{ navigationVoiceEnabled ? '关闭语音' : '开启语音' }}
+										</button>
+										<button class="navigation-stop-button" @click="stopNavigation">结束导航</button>
+									</view>
+								</view>
+								<text v-if="navigationStep" class="navigation-instruction">
+									{{ navigationStep.instruction }}
+								</text>
+								<view class="navigation-progress-track">
+									<view class="navigation-progress-fill" :style="{ width: `${navigationProgressPercent}%` }"></view>
+								</view>
+								<view class="navigation-distances">
+									<text>距当前指引 {{ formatRouteDistance(navigationDistanceToStep) }}</text>
+									<text>剩余 {{ formatRouteDistance(navigationRemainingDistance) }}</text>
+								</view>
+								<text class="navigation-eta">
+									已行驶 {{ navigationProgressPercent }}% · 预计剩余 {{ formatRouteDuration(navigationRemainingDuration) }}
+								</text>
+							</template>
+							<text v-if="!navigationActive && navigationStatus === '已到达目的地'" class="navigation-arrival">
+								已到达目的地
+							</text>
+						</view>
 						<text v-if="routeError" class="place-search-message place-search-error">{{ routeError }}</text>
 						<template v-if="routeOptions.length">
 							<view class="route-options">
@@ -380,6 +419,7 @@ const {
 })
 
 let initializeRouteOriginFromLocation = () => {}
+let updateRouteNavigationFromLocation = () => {}
 
 const {
 	startPositionTracking,
@@ -397,7 +437,10 @@ const {
 	geoZoom: GEO_ZOOM,
 	setMapCenterByWgs84,
 	renderMarker,
-	onLocationSuccess: (location) => initializeRouteOriginFromLocation(location)
+	onLocationSuccess: (location) => {
+		initializeRouteOriginFromLocation(location)
+		updateRouteNavigationFromLocation(location)
+	}
 })
 
 const {
@@ -412,10 +455,23 @@ const {
 	activeRoute,
 	activeRouteIndex,
 	previewRouteIndex,
+	navigationActive,
+	navigationStep,
+	navigationDistanceToStep,
+	navigationRemainingDistance,
+	navigationProgressPercent,
+	navigationRemainingDuration,
+	navigationStatus,
+	navigationVoiceEnabled,
+	navigationVoiceAvailable,
 	planRoute,
 	selectRoute,
 	previewRoute,
 	clearRoutePreview,
+	startNavigation,
+	stopNavigation,
+	updateNavigationLocation,
+	toggleNavigationVoice,
 	setRouteEndpointFromMap,
 	clearRoute,
 	renderRoute,
@@ -430,6 +486,7 @@ const {
 })
 
 initializeRouteOriginFromLocation = setRouteOriginFromLocation
+updateRouteNavigationFromLocation = updateNavigationLocation
 
 function handleMapContextMenu(event) {
 	if (!mapRef.value || !mapTargetElement.value) {
@@ -749,6 +806,7 @@ onBeforeUnmount(() => {
 	disableLocationTracking()
 	stopHistoryPlayback()
 	stopMeasurement()
+	stopNavigation()
 	if (mapTargetElement.value) {
 		mapTargetElement.value.removeEventListener('contextmenu', handleMapContextMenu)
 	}
@@ -978,6 +1036,125 @@ onBeforeUnmount(() => {
 	align-items: center;
 	gap: 10rpx;
 	margin-top: 12rpx;
+}
+
+.navigation-card {
+	margin-top: 12rpx;
+	padding: 14rpx;
+	border: 1rpx solid rgba(15, 118, 110, 0.18);
+	border-radius: 14rpx;
+	background: rgba(15, 118, 110, 0.06);
+}
+
+.navigation-actions,
+.navigation-head,
+.navigation-distances {
+	display: flex;
+	align-items: center;
+	gap: 10rpx;
+}
+
+.navigation-actions {
+	flex-wrap: wrap;
+}
+
+.navigation-head {
+	justify-content: space-between;
+}
+
+.navigation-status {
+	font-size: 22rpx;
+	font-weight: 700;
+	color: #0f766e;
+}
+
+.navigation-note {
+	font-size: 20rpx;
+	color: #627d98;
+}
+
+.navigation-button,
+.navigation-voice-button,
+.navigation-stop-button {
+	margin: 0;
+	padding: 0 16rpx;
+	height: 58rpx;
+	line-height: 58rpx;
+	border: 0;
+	border-radius: 12rpx;
+	font-size: 21rpx;
+}
+
+.navigation-button::after,
+.navigation-voice-button::after,
+.navigation-stop-button::after {
+	border: 0;
+}
+
+.navigation-button {
+	background: #0f766e;
+	color: #ffffff;
+}
+
+.navigation-button[disabled] {
+	background: #d1d5db;
+	color: #6b7280;
+}
+
+.navigation-voice-button {
+	background: #e0f2fe;
+	color: #075985;
+}
+
+.navigation-stop-button {
+	background: #fff0ed;
+	color: #b42318;
+}
+
+.navigation-instruction {
+	display: block;
+	margin-top: 10rpx;
+	font-size: 26rpx;
+	font-weight: 700;
+	line-height: 1.5;
+	color: #183153;
+}
+
+.navigation-progress-track {
+	height: 8rpx;
+	margin-top: 12rpx;
+	border-radius: 999rpx;
+	background: rgba(15, 118, 110, 0.16);
+	overflow: hidden;
+}
+
+.navigation-progress-fill {
+	height: 100%;
+	border-radius: inherit;
+	background: #0f766e;
+	transition: width 180ms ease;
+}
+
+.navigation-distances {
+	justify-content: space-between;
+	margin-top: 8rpx;
+	font-size: 21rpx;
+	color: #52606d;
+}
+
+.navigation-eta {
+	display: block;
+	margin-top: 6rpx;
+	font-size: 20rpx;
+	color: #627d98;
+}
+
+.navigation-arrival {
+	display: block;
+	margin-top: 8rpx;
+	font-size: 22rpx;
+	font-weight: 700;
+	color: #0f766e;
 }
 
 .route-mode-button,

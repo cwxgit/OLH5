@@ -23,12 +23,29 @@ export function useRoutePlanner({
 	const activeRouteIndex = ref(0)
 	const previewRouteIndex = ref(null)
 	const activeRoute = computed(() => routeOptions.value[activeRouteIndex.value] || null)
+	const navigationActive = ref(false)
+	const navigationProgress = ref(0)
+	const navigationStepIndex = ref(0)
+	const navigationDistanceToStep = ref(0)
+	const navigationRemainingDistance = ref(0)
+	const navigationRouteDistance = ref(0)
+	const navigationStatus = ref('')
+	const navigationVoiceEnabled = ref(false)
+	const navigationVoiceAvailable = ref(false)
 	const pickedOrigin = ref(null)
 	const pickedDestination = ref(null)
 	let originPickRequestId = 0
 	let destinationPickRequestId = 0
 	let locationOriginInitializationHandled = false
 	let originAddressResolution = null
+	let lastMatchedSegment = 0
+	let offRouteFixes = 0
+	let lastRerouteAt = 0
+	let spokenStepIndex = -1
+
+	const EARTH_RADIUS_METERS = 6371008.8
+	const OFF_ROUTE_DISTANCE_METERS = 60
+	const REROUTE_COOLDOWN_MS = 30000
 
 	function formatRouteDistance(distance) {
 		return distance < 1000
@@ -37,12 +54,237 @@ export function useRoutePlanner({
 	}
 
 	function formatRouteDuration(duration) {
-		if (duration < 60) {
-			return `${Math.max(1, Math.round(duration))} 分钟`
+		const totalMinutes = Math.max(1, Math.round(Number(duration) || 0))
+		if (totalMinutes < 60) {
+			return `${totalMinutes} 分钟`
 		}
-		const hours = Math.floor(duration / 60)
-		const minutes = Math.round(duration % 60)
+		const hours = Math.floor(totalMinutes / 60)
+		const minutes = totalMinutes % 60
 		return minutes ? `${hours} 小时 ${minutes} 分钟` : `${hours} 小时`
+	}
+
+	function getNavigationSteps() {
+		return Array.isArray(activeRoute.value && activeRoute.value.steps)
+			? activeRoute.value.steps
+			: []
+	}
+
+	const navigationStep = computed(() => getNavigationSteps()[navigationStepIndex.value] || null)
+	const navigationProgressPercent = computed(() => navigationRouteDistance.value > 0
+		? Math.min(100, Math.round(navigationProgress.value / navigationRouteDistance.value * 100))
+		: 0)
+	const navigationRemainingDuration = computed(() => {
+		const route = activeRoute.value
+		if (!route || navigationRouteDistance.value <= 0) {
+			return 0
+		}
+		return Math.max(0, Number(route.duration) || 0)
+			* Math.max(0, 1 - navigationProgress.value / navigationRouteDistance.value)
+	})
+
+	function distanceBetweenCoordinates(first, second) {
+		const latitudeDelta = (second.lat - first.lat) * Math.PI / 180
+		const longitudeDelta = (second.lng - first.lng) * Math.PI / 180
+		const firstLatitude = first.lat * Math.PI / 180
+		const secondLatitude = second.lat * Math.PI / 180
+		const haversine = Math.sin(latitudeDelta / 2) ** 2
+			+ Math.cos(firstLatitude) * Math.cos(secondLatitude) * Math.sin(longitudeDelta / 2) ** 2
+		return 2 * EARTH_RADIUS_METERS * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine))
+	}
+
+	function getRouteProgress(location) {
+		const route = activeRoute.value
+		if (!route || !Array.isArray(route.polyline) || route.polyline.length < 2) {
+			return null
+		}
+
+		const coordinates = route.polyline
+			.map(({ lat, lng }) => ({ lat: Number(lat), lng: Number(lng) }))
+			.filter(({ lat, lng }) => Number.isFinite(lat) && Number.isFinite(lng))
+		if (coordinates.length < 2) {
+			return null
+		}
+
+		const cumulative = [0]
+		for (let index = 1; index < coordinates.length; index += 1) {
+			cumulative[index] = cumulative[index - 1]
+				+ distanceBetweenCoordinates(coordinates[index - 1], coordinates[index])
+		}
+
+		let closest = null
+		const searchStart = Math.max(0, lastMatchedSegment - 4)
+		for (let index = searchStart; index < coordinates.length - 1; index += 1) {
+			const start = coordinates[index]
+			const end = coordinates[index + 1]
+			const latitudeScale = Math.cos(location.lat * Math.PI / 180)
+			const xScale = EARTH_RADIUS_METERS * Math.PI / 180 * latitudeScale
+			const yScale = EARTH_RADIUS_METERS * Math.PI / 180
+			const startX = (start.lng - location.lng) * xScale
+			const startY = (start.lat - location.lat) * yScale
+			const endX = (end.lng - location.lng) * xScale
+			const endY = (end.lat - location.lat) * yScale
+			const segmentX = endX - startX
+			const segmentY = endY - startY
+			const segmentLengthSquared = segmentX * segmentX + segmentY * segmentY
+			const fraction = segmentLengthSquared === 0
+				? 0
+				: Math.max(0, Math.min(1, -(startX * segmentX + startY * segmentY) / segmentLengthSquared))
+			const crossTrackDistance = Math.hypot(startX + fraction * segmentX, startY + fraction * segmentY)
+			if (!closest || crossTrackDistance < closest.distance) {
+				const segmentLength = cumulative[index + 1] - cumulative[index]
+				closest = {
+					distance: crossTrackDistance,
+					segmentIndex: index,
+					progress: cumulative[index] + segmentLength * fraction
+				}
+			}
+		}
+
+		if (!closest) {
+			return null
+		}
+		lastMatchedSegment = Math.max(lastMatchedSegment, closest.segmentIndex)
+		return {
+			distance: closest.distance,
+			progress: Math.max(navigationProgress.value, closest.progress),
+			total: cumulative[cumulative.length - 1]
+		}
+	}
+
+	function getNavigationStep(progress, totalDistance) {
+		const steps = getNavigationSteps()
+		if (!steps.length) {
+			return { index: 0, distance: Math.max(0, totalDistance - progress) }
+		}
+		const stepsDistance = steps.reduce((total, step) => {
+			const distance = Number(step.distance)
+			return total + (Number.isFinite(distance) && distance > 0 ? distance : 0)
+		}, 0)
+		if (stepsDistance <= 0 || totalDistance <= 0) {
+			return { index: 0, distance: Math.max(0, totalDistance - progress) }
+		}
+
+		const scale = totalDistance / stepsDistance
+		let boundary = 0
+		for (let index = 0; index < steps.length; index += 1) {
+			const stepDistance = Math.max(0, Number(steps[index].distance) || 0) * scale
+			boundary += stepDistance
+			if (progress <= boundary || index === steps.length - 1) {
+				return { index, distance: Math.max(0, boundary - progress) }
+			}
+		}
+		return { index: steps.length - 1, distance: 0 }
+	}
+
+	function speakNavigationInstruction(instruction) {
+		if (!navigationVoiceEnabled.value || typeof window === 'undefined'
+			|| !window.speechSynthesis || typeof SpeechSynthesisUtterance === 'undefined') {
+			return
+		}
+		window.speechSynthesis.cancel()
+		const utterance = new SpeechSynthesisUtterance(instruction)
+		utterance.lang = 'zh-CN'
+		window.speechSynthesis.speak(utterance)
+	}
+
+	function stopNavigation(status = '') {
+		navigationActive.value = false
+		navigationStatus.value = status
+		offRouteFixes = 0
+		spokenStepIndex = -1
+		if (typeof window !== 'undefined' && window.speechSynthesis) {
+			window.speechSynthesis.cancel()
+		}
+	}
+
+	function startNavigation() {
+		if (!activeRoute.value || !Array.isArray(activeRoute.value.polyline)
+			|| activeRoute.value.polyline.length < 2) {
+			routeError.value = '请先规划出可用路线'
+			return false
+		}
+		if (!userLocationWgs84.value) {
+			routeError.value = '请先完成定位后再开始导航'
+			return false
+		}
+
+		navigationActive.value = true
+		navigationProgress.value = 0
+		navigationStepIndex.value = 0
+		navigationDistanceToStep.value = 0
+		navigationRemainingDistance.value = Number(activeRoute.value.distance) || 0
+		navigationRouteDistance.value = Number(activeRoute.value.distance) || 0
+		navigationStatus.value = '正在定位路线位置…'
+		lastMatchedSegment = 0
+		offRouteFixes = 0
+		spokenStepIndex = -1
+		updateNavigationLocation(userLocationWgs84.value)
+		return true
+	}
+
+	function updateNavigationLocation(wgs84) {
+		if (!navigationActive.value || !Array.isArray(wgs84) || wgs84.length < 2) {
+			return
+		}
+		const gcj02 = wgs84ToGcj02(Number(wgs84[0]), Number(wgs84[1]))
+		const progress = getRouteProgress({ lng: gcj02[0], lat: gcj02[1] })
+		if (!progress) {
+			navigationStatus.value = '无法匹配路线位置'
+			return
+		}
+
+		navigationProgress.value = progress.progress
+		navigationRouteDistance.value = progress.total
+		navigationRemainingDistance.value = Math.max(0, progress.total - progress.progress)
+		if (progress.distance > OFF_ROUTE_DISTANCE_METERS) {
+			offRouteFixes += 1
+			navigationStatus.value = `已偏离路线约 ${formatRouteDistance(progress.distance)}`
+			if (offRouteFixes >= 3 && !routeLoading.value
+				&& Date.now() - lastRerouteAt >= REROUTE_COOLDOWN_MS) {
+				void rerouteFromLocation(gcj02)
+			}
+		} else {
+			offRouteFixes = 0
+			navigationStatus.value = '导航中'
+		}
+
+		const step = getNavigationStep(progress.progress, progress.total)
+		navigationStepIndex.value = step.index
+		navigationDistanceToStep.value = step.distance
+		if (step.index !== spokenStepIndex) {
+			spokenStepIndex = step.index
+			const instruction = navigationStep.value && navigationStep.value.instruction
+			if (instruction) {
+				speakNavigationInstruction(instruction)
+			}
+		}
+		if (navigationRemainingDistance.value <= 15) {
+			stopNavigation('已到达目的地')
+		}
+	}
+
+	async function rerouteFromLocation(gcj02) {
+		if (!navigationActive.value || routeLoading.value) {
+			return
+		}
+		lastRerouteAt = Date.now()
+		offRouteFixes = 0
+		navigationStatus.value = '偏航，正在重新规划…'
+		try {
+			await planRoute({ originOverride: `${gcj02[1]},${gcj02[0]}`, preserveNavigation: true })
+			if (navigationActive.value && routeOptions.value.length) {
+				navigationProgress.value = 0
+				navigationStepIndex.value = 0
+				navigationRemainingDistance.value = Number(activeRoute.value.distance) || 0
+				navigationRouteDistance.value = Number(activeRoute.value.distance) || 0
+				lastMatchedSegment = 0
+				navigationStatus.value = '路线已更新，继续导航'
+			}
+		} finally {
+			if (navigationActive.value && navigationStatus.value === '偏航，正在重新规划…') {
+				navigationStatus.value = '重新规划未完成，仍按原路线导航'
+			}
+		}
 	}
 
 	function renderRoute(fitMap = false) {
@@ -129,11 +371,20 @@ export function useRoutePlanner({
 		}
 		activeRouteIndex.value = index
 		previewRouteIndex.value = null
+		if (navigationActive.value) {
+			navigationProgress.value = 0
+			navigationStepIndex.value = 0
+			navigationRemainingDistance.value = Number(activeRoute.value.distance) || 0
+			navigationRouteDistance.value = Number(activeRoute.value.distance) || 0
+			lastMatchedSegment = 0
+			spokenStepIndex = -1
+			updateNavigationLocation(userLocationWgs84.value)
+		}
 		renderRoute(true)
 	}
 
 	function previewRoute(index) {
-		if (index < 0 || index >= routeOptions.value.length) {
+		if (navigationActive.value || index < 0 || index >= routeOptions.value.length) {
 			return
 		}
 		previewRouteIndex.value = index
@@ -149,6 +400,7 @@ export function useRoutePlanner({
 	}
 
 	function setRouteEndpointInput(endpoint, value) {
+		stopNavigation()
 		if (endpoint === 'origin') {
 			originPickRequestId += 1
 			pickedOrigin.value = null
@@ -158,6 +410,8 @@ export function useRoutePlanner({
 			pickedDestination.value = null
 			destinationInput.value = value
 		}
+		routeOptions.value = []
+		activeRouteIndex.value = 0
 		previewRouteIndex.value = null
 		renderRoute()
 	}
@@ -262,6 +516,7 @@ export function useRoutePlanner({
 		} else {
 			return false
 		}
+		stopNavigation()
 		routeOptions.value = []
 		activeRouteIndex.value = 0
 		previewRouteIndex.value = null
@@ -280,10 +535,11 @@ export function useRoutePlanner({
 		return true
 	}
 
-	async function planRoute() {
+	async function planRoute(options = {}) {
 		if (routeLoading.value) {
 			return
 		}
+		const preserveNavigation = options.preserveNavigation === true
 		const destination = pickedDestination.value
 			? `${pickedDestination.value.lat},${pickedDestination.value.lng}`
 			: destinationInput.value.trim()
@@ -292,9 +548,9 @@ export function useRoutePlanner({
 			return
 		}
 
-		let origin = pickedOrigin.value
+		let origin = options.originOverride || (pickedOrigin.value
 			? `${pickedOrigin.value.lat},${pickedOrigin.value.lng}`
-			: originInput.value.trim()
+			: originInput.value.trim())
 		if (!origin && userLocationWgs84.value) {
 			const gcj02 = wgs84ToGcj02(userLocationWgs84.value[0], userLocationWgs84.value[1])
 			origin = `${gcj02[1]},${gcj02[0]}`
@@ -306,6 +562,9 @@ export function useRoutePlanner({
 
 		routeLoading.value = true
 		routeError.value = ''
+		if (!preserveNavigation) {
+			stopNavigation()
+		}
 		try {
 			if (pickedOrigin.value && !originInput.value.trim() && originAddressResolution) {
 				await originAddressResolution
@@ -328,18 +587,45 @@ export function useRoutePlanner({
 				renderRoute()
 				return
 			}
+			if (preserveNavigation && navigationActive.value) {
+				navigationProgress.value = 0
+				navigationStepIndex.value = 0
+				navigationRemainingDistance.value = Number(activeRoute.value.distance) || 0
+				navigationRouteDistance.value = Number(activeRoute.value.distance) || 0
+				lastMatchedSegment = 0
+				spokenStepIndex = -1
+			}
 			renderRoute(true)
 		} catch (error) {
-			routeOptions.value = []
+			if (!preserveNavigation) {
+				routeOptions.value = []
+			}
 			previewRouteIndex.value = null
 			renderRoute()
 			routeError.value = error && error.message ? error.message : '路线规划失败，请稍后重试'
+			if (preserveNavigation && navigationActive.value) {
+				navigationStatus.value = '重新规划失败，仍按原路线导航'
+			}
 		} finally {
 			routeLoading.value = false
 		}
 	}
 
+	function toggleNavigationVoice() {
+		if (!navigationVoiceAvailable.value) {
+			routeError.value = '当前浏览器不支持语音播报'
+			return
+		}
+		navigationVoiceEnabled.value = !navigationVoiceEnabled.value
+		if (!navigationVoiceEnabled.value && typeof window !== 'undefined') {
+			window.speechSynthesis.cancel()
+		} else if (navigationStep.value && navigationStep.value.instruction) {
+			speakNavigationInstruction(navigationStep.value.instruction)
+		}
+	}
+
 	function clearRoute() {
+		stopNavigation()
 		routeOptions.value = []
 		activeRouteIndex.value = 0
 		previewRouteIndex.value = null
@@ -349,6 +635,12 @@ export function useRoutePlanner({
 		originPickRequestId += 1
 		destinationPickRequestId += 1
 		renderRoute()
+	}
+
+	if (typeof window !== 'undefined') {
+		navigationVoiceAvailable.value = Boolean(
+			window.speechSynthesis && typeof SpeechSynthesisUtterance !== 'undefined'
+		)
 	}
 
 	return {
@@ -363,10 +655,23 @@ export function useRoutePlanner({
 		activeRoute,
 		activeRouteIndex,
 		previewRouteIndex,
+		navigationActive,
+		navigationStep,
+		navigationDistanceToStep,
+		navigationRemainingDistance,
+		navigationProgressPercent,
+		navigationRemainingDuration,
+		navigationStatus,
+		navigationVoiceEnabled,
+		navigationVoiceAvailable,
 		planRoute,
 		selectRoute,
 		previewRoute,
 		clearRoutePreview,
+		startNavigation,
+		stopNavigation,
+		updateNavigationLocation,
+		toggleNavigationVoice,
 		setRouteEndpointFromMap,
 		clearRoute,
 		renderRoute,
