@@ -6,7 +6,7 @@
 				<view class="hero-panel">
 					<view class="hero-copy">
 						<text class="eyebrow">OLH5 / Vue3 + OpenLayers</text>
-						<text class="hero-title">移动端地图浏览与行政区联动</text>
+						<text class="hero-title">移动端地图浏览与路线规划</text>
 						<text class="hero-desc">
 							复刻 `layers.cpxiang.tech` 的核心能力，保留原有后端接口调用路径，并针对 H5 场景优化布局与交互。
 						</text>
@@ -15,6 +15,10 @@
 					<view class="hero-actions">
 						<button class="geo-button" @click="locateMe">{{ geoButtonText }}</button>
 						<button v-if="hasLocated" class="ghost-button" @click="recenterToUser">回到我的位置</button>
+						<view class="link-actions">
+							<text class="link-action" @click="openLink(loginUrl)">登录</text>
+							<text class="link-action" @click="openLink(registerUrl)">注册</text>
+						</view>
 					</view>
 
 					<view class="status-strip">
@@ -23,57 +27,72 @@
 						<text v-if="locationLabel" class="status-pill success-pill">{{ locationLabel }}</text>
 					</view>
 
-					<view class="toolbar-card">
-						<view class="toolbar-head">
-							<text class="toolbar-title">地址联动</text>
-							<view class="link-actions">
-								<text class="link-action" @click="openLink(loginUrl)">登录</text>
-								<text class="link-action" @click="openLink(registerUrl)">注册</text>
-							</view>
-						</view>
-						<view class="select-grid">
-							<picker
-								v-for="(group, index) in areaGroups"
-								:key="group.key"
-								:range="group.options"
-								range-key="name"
-								:value="getPickerIndex(group)"
-								@change="handleAreaChange(index, $event)"
+					<view class="route-card">
+						<text class="route-title">国内路线规划</text>
+						<input
+							class="place-search-input route-input"
+							type="text"
+							:value="originInput"
+							placeholder="起点（右键设定；留空使用当前位置）"
+							@input="setRouteEndpointInput('origin', $event.detail.value)"
+						/>
+						<input
+							class="place-search-input route-input"
+							type="text"
+							:value="destinationInput"
+							placeholder="终点（右键地图设定或输入地址）"
+							confirm-type="search"
+							@input="setRouteEndpointInput('destination', $event.detail.value)"
+							@confirm="planRoute"
+						/>
+						<text class="route-pick-hint">右键地图可选起点和终点；也可手动输入地址。</text>
+						<view class="route-modes">
+							<button
+								v-for="mode in routeModes"
+								:key="mode.key"
+								class="route-mode-button"
+								:class="{ active: routeMode === mode.key, disabled: mode.key === 'transit' }"
+								:disabled="mode.key === 'transit'"
+								@click="routeMode = mode.key"
 							>
-								<view class="select-card">
-									<text class="select-label">{{ areaLabel(index) }}</text>
-									<text class="select-value">{{ getPickerLabel(group) }}</text>
+								{{ mode.label }}
+							</button>
+						</view>
+						<view class="route-actions">
+							<button class="history-button" :disabled="routeLoading" @click="planRoute">
+								{{ routeLoading ? '规划中…' : '规划路线' }}
+							</button>
+							<button v-if="routeOptions.length" class="route-clear-button" @click="clearRoute">清除路线</button>
+						</view>
+						<text v-if="routeError" class="place-search-message place-search-error">{{ routeError }}</text>
+						<template v-if="routeOptions.length">
+							<view class="route-options">
+								<view
+									v-for="(route, index) in routeOptions"
+									:key="index"
+									class="route-option"
+									:class="{ active: activeRouteIndex === index, previewing: previewRouteIndex === index }"
+									@mouseenter="previewRoute(index)"
+									@mouseleave="clearRoutePreview"
+									@click="selectRoute(index)"
+								>
+									<text class="route-option-title">方案 {{ index + 1 }}</text>
+									<text class="route-option-meta">
+										{{ formatRouteDistance(route.distance) }} · {{ formatRouteDuration(route.duration) }}
+										{{ route.toll !== null ? ` · 过路费约 ¥${route.toll}` : '' }}
+										{{ route.fare !== null ? ` · 票价约 ¥${(route.fare / 100).toFixed(2)}` : '' }}
+									</text>
 								</view>
-							</picker>
-						</view>
-
-						<view class="place-search">
-							<input
-								class="place-search-input"
-								type="text"
-								:value="areaSearchKeyword"
-								placeholder="搜索地名或行政区"
-								confirm-type="search"
-								@input="handleAreaSearchInput"
-								@confirm="searchAreasNow"
-							/>
-							<view v-if="areaSearchLoading || areaSearchError || areaSearchResults.length || (areaSearchHasSearched && !areaSearchLoading)" class="place-search-results">
-								<text v-if="areaSearchLoading" class="place-search-message">正在搜索...</text>
-								<text v-else-if="areaSearchError" class="place-search-message place-search-error">{{ areaSearchError }}</text>
-								<template v-else-if="areaSearchResults.length">
-									<view
-										v-for="result in areaSearchResults"
-										:key="result.code"
-										class="place-search-result"
-										@click="selectSearchResult(result)"
-									>
-										<text class="place-search-name">{{ result.name }}</text>
-										<text class="place-search-meta">{{ areaLabel(Number(result.level) - 1) }} · {{ result.lng }},{{ result.lat }}</text>
-									</view>
-								</template>
-								<text v-else class="place-search-message">没有找到匹配地点</text>
 							</view>
-						</view>
+							<view v-if="activeRoute && activeRoute.steps.length" class="route-steps">
+								<view v-for="(step, index) in activeRoute.steps" :key="index" class="route-step">
+									<text class="route-step-instruction">{{ step.instruction }}</text>
+									<text v-if="step.distance" class="route-step-distance">{{ formatRouteDistance(step.distance) }}</text>
+								</view>
+							</view>
+							<text class="route-disclaimer">路线由腾讯位置服务提供，实际通行情况以现场为准。</text>
+						</template>
+					</view>
 
 						<view class="history-card">
 							<text class="history-title">位置历史与轨迹回放</text>
@@ -152,7 +171,6 @@
 							</view>
 							<text v-else-if="historyLoaded" class="history-count">该日期没有可显示的位置记录</text>
 						</view>
-					</view>
 				</view>
 
 				<view class="layer-panel">
@@ -182,6 +200,7 @@
 
 			<view class="map-panel">
 				<button v-if="!sidebarVisible" class="sidebar-toggle sidebar-toggle-floating" @click="toggleSidebar">显示控制栏</button>
+				<view class="route-map-hint">鼠标右击地图选择路线起点或终点</view>
 				<view class="measurement-tools">
 					<view class="measurement-buttons">
 						<button
@@ -242,6 +261,17 @@
 					</view>
 				</view>
 				<view id="ol-map" class="map-canvas"></view>
+				<view
+					v-if="routeContextMenu.visible"
+					class="route-context-menu"
+					:style="{ left: `${routeContextMenu.left}px`, top: `${routeContextMenu.top}px` }"
+					@click.stop
+				>
+					<text class="route-context-title">设定路线位置</text>
+					<text class="route-context-coordinate">{{ routeContextMenu.coordinateLabel }}</text>
+					<view class="route-context-action" @click="setMapRouteEndpoint('origin')">设为起点</view>
+					<view class="route-context-action" @click="setMapRouteEndpoint('destination')">设为终点</view>
+				</view>
 			</view>
 		</view>
 	</view>
@@ -252,49 +282,44 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'v
 import 'ol/ol.css'
 import Map from 'ol/Map'
 import View from 'ol/View'
-import TileLayer from 'ol/layer/Tile'
 import VectorLayer from 'ol/layer/Vector'
-import XYZ from 'ol/source/XYZ'
-import OSM from 'ol/source/OSM'
 import VectorSource from 'ol/source/Vector'
-import Draw from 'ol/interaction/Draw'
 import Feature from 'ol/Feature'
-import LineString from 'ol/geom/LineString'
 import Point from 'ol/geom/Point'
-import Polygon from 'ol/geom/Polygon'
 import CircleGeom from 'ol/geom/Circle'
 import { defaults as defaultControls, ScaleLine } from 'ol/control'
-import { primaryAction } from 'ol/events/condition'
-import { Fill, Stroke, Style, Text, Circle as CircleStyle } from 'ol/style'
+import { Fill, Stroke, Style, Circle as CircleStyle } from 'ol/style'
 import { fromLonLat, toLonLat } from 'ol/proj'
-import { getArea, getDistance, getLength, offset } from 'ol/sphere'
-import { ROOT_AREAS } from '../../utils/areas'
 import { gcj02ToWgs84, wgs84ToGcj02 } from '../../utils/coordTransform'
+import { useMeasurements } from '../../composables/useMeasurements'
+import { useLocation } from '../../composables/useLocation'
+import { usePositionHistory } from '../../composables/usePositionHistory'
+import { useRoutePlanner } from '../../composables/useRoutePlanner'
+import { buildBaseLayers } from '../../utils/mapLayers'
+import {
+	loginUrl,
+	registerUrl,
+	resolveAppUrl
+} from '../../utils/positionApi'
 
 const DEFAULT_CENTER = [116.405285, 39.904989]
 const DEFAULT_CENTER_ZOOM = 8
 const GEO_ZOOM = 16
-const AREA_ZOOMS = [6, 10, 14, 16, 18]
-const adminBaseUrl = 'https://oladmin.cc'
-const positionApiBaseUrl = adminBaseUrl
-const loginUrl = adminBaseUrl + '/login'
-const registerUrl = adminBaseUrl + '/register'
-
+const routeModes = [
+	{ key: 'driving', label: '驾车' },
+	{ key: 'walking', label: '步行' },
+	{ key: 'bicycling', label: '骑行' },
+	{ key: 'transit', label: '公交' }
+]
 const mapRef = ref(null)
 const viewRef = ref(null)
 const measurementSourceRef = ref(null)
 const historySourceRef = ref(null)
+const routeSourceRef = ref(null)
+const mapTargetElement = ref(null)
 const sidebarVisible = ref(true)
 const positionFeatureRef = ref(null)
 const accuracyFeatureRef = ref(null)
-const geolocationWatchId = ref(null)
-const areaSearchKeyword = ref('')
-const areaSearchResults = ref([])
-const areaSearchLoading = ref(false)
-const areaSearchHasSearched = ref(false)
-const areaSearchError = ref('')
-let areaSearchTimer = null
-let areaSearchRequestId = 0
 const markerSourceWgs84 = ref(null)
 const userLocationWgs84 = ref(null)
 const currentAccuracy = ref(0)
@@ -306,7 +331,6 @@ const eesDisabledHint = ref(false)
 const measurementMode = ref('')
 const measurementInProgress = ref(false)
 const measurements = ref([])
-const trackingEnabled = ref(false)
 const historyStartDate = ref(getLocalDate())
 const historyStartTime = ref('00:00')
 const historyEndDate = ref(getLocalDate())
@@ -317,24 +341,14 @@ const historyPlaying = ref(false)
 const historyLoading = ref(false)
 const historyLoaded = ref(false)
 const historyError = ref('')
-let measurementDrawInteraction = null
-let nextMeasurementId = 1
-let playbackTimer = null
-let historyPlaybackFeature = null
-let historySubmissionPending = false
-
-const areaGroups = ref([
-	{
-		key: 'level-1',
-		selectedCode: '0',
-		options: [{ code: '0', name: '--请选择省份--', status: 0 }].concat(
-			ROOT_AREAS.map((item) => ({
-				...item,
-				coordType: 'gcj02'
-			}))
-		)
-	}
-])
+const routeContextMenu = reactive({
+	visible: false,
+	left: 0,
+	top: 0,
+	lat: 0,
+	lng: 0,
+	coordinateLabel: ''
+})
 
 const layerConfigs = reactive([
 	{ key: 'tengxun', label: 'Tengxun', coordType: 'gcj02', coordLabel: 'gcj02', note: '', disabled: false },
@@ -344,6 +358,152 @@ const layerConfigs = reactive([
 	{ key: 'arcgis', label: 'Arc Maps', coordType: 'wgs84', coordLabel: 'wgs84', note: '', disabled: false },
 	{ key: 'nasa', label: 'NASA Viirs', coordType: 'wgs84', coordLabel: 'wgs84', note: '', disabled: false }
 ])
+
+const {
+	startMeasurement,
+	stopMeasurement,
+	renderMeasurements,
+	formatMeasurement,
+	formatDistance,
+	formatArea,
+	removeMeasurement,
+	clearMeasurements
+} = useMeasurements({
+	mapRef,
+	measurementSourceRef,
+	measurementMode,
+	measurementInProgress,
+	measurements,
+	getLayerConfig,
+	encodeByCoordType,
+	decodeByCoordType
+})
+
+let initializeRouteOriginFromLocation = () => {}
+
+const {
+	startPositionTracking,
+	disableLocationTracking,
+	locateMe,
+	recenterToUser
+} = useLocation({
+	markerSourceWgs84,
+	userLocationWgs84,
+	currentAccuracy,
+	hasLocated,
+	locating,
+	locationLabel,
+	viewRef,
+	geoZoom: GEO_ZOOM,
+	setMapCenterByWgs84,
+	renderMarker,
+	onLocationSuccess: (location) => initializeRouteOriginFromLocation(location)
+})
+
+const {
+	originInput,
+	destinationInput,
+	setRouteEndpointInput,
+	setRouteOriginFromLocation,
+	routeMode,
+	routeLoading,
+	routeError,
+	routeOptions,
+	activeRoute,
+	activeRouteIndex,
+	previewRouteIndex,
+	planRoute,
+	selectRoute,
+	previewRoute,
+	clearRoutePreview,
+	setRouteEndpointFromMap,
+	clearRoute,
+	renderRoute,
+	formatRouteDistance,
+	formatRouteDuration
+} = useRoutePlanner({
+	mapRef,
+	routeSourceRef,
+	userLocationWgs84,
+	getLayerConfig,
+	encodeByCoordType
+})
+
+initializeRouteOriginFromLocation = setRouteOriginFromLocation
+
+function handleMapContextMenu(event) {
+	if (!mapRef.value || !mapTargetElement.value) {
+		return
+	}
+	event.preventDefault()
+
+	const displayCoordinate = toLonLat(mapRef.value.getEventCoordinate(event))
+	const wgs84 = decodeByCoordType(displayCoordinate, getLayerConfig().coordType)
+	if (!wgs84) {
+		return
+	}
+	const [longitude, latitude] = wgs84ToGcj02(wgs84[0], wgs84[1])
+	const targetRect = mapTargetElement.value.getBoundingClientRect()
+	const menuWidth = 188
+	const menuHeight = 126
+	const x = event.clientX - targetRect.left
+	const y = event.clientY - targetRect.top
+
+	routeContextMenu.lat = latitude
+	routeContextMenu.lng = longitude
+	routeContextMenu.coordinateLabel = `${longitude.toFixed(6)}, ${latitude.toFixed(6)}`
+	routeContextMenu.left = Math.max(8, Math.min(x, targetRect.width - menuWidth - 8))
+	routeContextMenu.top = Math.max(8, Math.min(y, targetRect.height - menuHeight - 8))
+	routeContextMenu.visible = true
+}
+
+function closeRouteContextMenu() {
+	routeContextMenu.visible = false
+}
+
+function handleDocumentPointerDown(event) {
+	if (event.target instanceof Element
+		&& (event.target.closest('.route-context-menu') || event.target.closest('#ol-map'))) {
+		return
+	}
+	closeRouteContextMenu()
+}
+
+function setMapRouteEndpoint(endpoint) {
+	const selected = setRouteEndpointFromMap(endpoint, {
+		lat: routeContextMenu.lat,
+		lng: routeContextMenu.lng
+	})
+	if (selected) {
+		closeRouteContextMenu()
+	}
+}
+
+const {
+	handleHistoryDateChange,
+	handleHistoryTimeChange,
+	loadPositionHistory,
+	renderPositionHistory,
+	seekHistoryPlayback,
+	toggleHistoryPlayback,
+	stopHistoryPlayback
+} = usePositionHistory({
+	historyStartDate,
+	historyStartTime,
+	historyEndDate,
+	historyEndTime,
+	historyRecords,
+	historyPlaybackIndex,
+	historyPlaying,
+	historyLoading,
+	historyLoaded,
+	historyError,
+	historySourceRef,
+	mapRef,
+	viewRef,
+	getLayerConfig,
+	encodeByCoordType
+})
 
 const activeLayerLabel = computed(() => {
 	const current = layerConfigs.find((item) => item.key === activeLayerKey.value)
@@ -374,21 +534,6 @@ function getLocalDate() {
 	const month = String(date.getMonth() + 1).padStart(2, '0')
 	const day = String(date.getDate()).padStart(2, '0')
 	return `${year}-${month}-${day}`
-}
-
-function areaLabel(index) {
-	const labels = ['省份', '地市', '区县', '乡镇', '村组']
-	return labels[index] || `层级 ${index + 1}`
-}
-
-function getPickerIndex(group) {
-	const index = group.options.findIndex((item) => item.code === group.selectedCode)
-	return index < 0 ? 0 : index
-}
-
-function getPickerLabel(group) {
-	const current = group.options.find((item) => item.code === group.selectedCode)
-	return current ? current.name : group.options[0].name
 }
 
 function getLayerConfig(key = activeLayerKey.value) {
@@ -503,212 +648,8 @@ function changeLayer(key) {
 	setMapCenterByWgs84(centerWgs84)
 	renderMarker()
 	renderMeasurements()
+	renderRoute()
 	renderPositionHistory(false)
-}
-
-function mapCoordinateTree(coordinates, transform) {
-	if (!Array.isArray(coordinates)) {
-		return coordinates
-	}
-	if (typeof coordinates[0] === 'number') {
-		return transform(coordinates)
-	}
-	return coordinates.map((coordinate) => mapCoordinateTree(coordinate, transform))
-}
-
-function createMeasurementGeometry(type, coordinates) {
-	return type === 'distance'
-		? new LineString(coordinates)
-		: new Polygon(coordinates)
-}
-
-function renderMeasurements() {
-	if (!measurementSourceRef.value) {
-		return
-	}
-	const coordType = getLayerConfig().coordType
-	measurements.value.forEach((measurement) => {
-		const feature = measurementSourceRef.value.getFeatures().find(
-			(item) => item.get('measurementId') === measurement.id
-		)
-		if (!feature) {
-			return
-		}
-		const coordinates = mapCoordinateTree(measurement.coordinates, (coordinate) => {
-			return fromLonLat(encodeByCoordType(coordinate, coordType))
-		})
-		feature.setGeometry(createMeasurementGeometry(measurement.type, coordinates))
-	})
-}
-
-function createCircleCoordinates(center, radius) {
-	const segments = 96
-	const ring = []
-	for (let index = 0; index <= segments; index += 1) {
-		ring.push(offset(center, radius, (index / segments) * Math.PI * 2))
-	}
-	return [ring]
-}
-
-function stopMeasurement() {
-	if (measurementDrawInteraction) {
-		const interaction = measurementDrawInteraction
-		measurementDrawInteraction = null
-		interaction.setActive(false)
-		interaction.abortDrawing()
-		interaction.getOverlay().getSource().clear()
-		if (mapRef.value) {
-			mapRef.value.removeInteraction(interaction)
-		}
-	}
-	measurementMode.value = ''
-	measurementInProgress.value = false
-}
-
-function startMeasurement(type) {
-	if (!mapRef.value || !measurementSourceRef.value) {
-		uni.showToast({ title: '地图尚未准备好，请稍后重试', icon: 'none' })
-		return
-	}
-	if (measurementMode.value === type) {
-		stopMeasurement()
-		return
-	}
-	stopMeasurement()
-	measurementMode.value = type
-	measurementDrawInteraction = new Draw({
-		source: measurementSourceRef.value,
-		type: type === 'area' ? 'Polygon' : 'LineString',
-		condition: primaryAction,
-		geometryFunction: type === 'circle'
-			? (coordinates, geometry) => {
-				const center = coordinates[0]
-				const edge = coordinates[coordinates.length - 1]
-				const radius = Math.hypot(edge[0] - center[0], edge[1] - center[1])
-				if (geometry) {
-					geometry.setCenterAndRadius(center, radius)
-					return geometry
-				}
-				return new CircleGeom(center, radius)
-			}
-			: undefined
-	})
-	measurementDrawInteraction.on('drawstart', () => {
-		measurementInProgress.value = true
-	})
-	measurementDrawInteraction.on('drawabort', () => {
-		measurementInProgress.value = false
-	})
-	let measurementCompleted = false
-	measurementDrawInteraction.on('drawend', (event) => {
-		if (measurementCompleted) {
-			return
-		}
-		measurementCompleted = true
-		measurementInProgress.value = false
-		const coordType = getLayerConfig().coordType
-		const id = nextMeasurementId++
-		let coordinates
-		let measurement
-		if (type === 'circle') {
-			const circle = event.feature.getGeometry()
-			const center3857 = circle.getCenter()
-			const center = decodeByCoordType(toLonLat(center3857), coordType)
-			const edge = decodeByCoordType(
-				toLonLat([center3857[0] + circle.getRadius(), center3857[1]]),
-				coordType
-			)
-			const radius = getDistance(center, edge)
-			coordinates = createCircleCoordinates(center, radius)
-			measurement = {
-				id,
-				type,
-				coordinates,
-				perimeter: 2 * Math.PI * radius,
-				area: Math.PI * radius * radius
-			}
-		} else {
-			const geographicGeometry = event.feature.getGeometry().clone().transform('EPSG:3857', 'EPSG:4326')
-			coordinates = mapCoordinateTree(geographicGeometry.getCoordinates(), (coordinate) => {
-				return decodeByCoordType(coordinate, coordType)
-			})
-			const geometryWgs84 = createMeasurementGeometry(type, coordinates)
-			measurement = { id, type, coordinates }
-			if (type === 'distance') {
-				measurement.distance = getLength(geometryWgs84, { projection: 'EPSG:4326' })
-			} else {
-				measurement.area = getArea(geometryWgs84, { projection: 'EPSG:4326' })
-			}
-		}
-		measurements.value.push(measurement)
-
-		event.feature.set('measurementId', id)
-		event.feature.setStyle(new Style({
-			fill: new Fill({ color: 'rgba(255, 183, 3, 0.18)' }),
-			stroke: new Stroke({ color: '#f08c00', width: 3 }),
-			image: new CircleStyle({
-				radius: 5,
-				fill: new Fill({ color: '#f08c00' }),
-				stroke: new Stroke({ color: '#ffffff', width: 2 })
-			}),
-			text: new Text({
-				text: formatMeasurement(measurement),
-				font: '600 13px sans-serif',
-				fill: new Fill({ color: '#183153' }),
-				backgroundFill: new Fill({ color: 'rgba(255, 255, 255, 0.9)' }),
-				padding: [4, 6, 4, 6],
-				overflow: true
-			})
-		}))
-		event.feature.setGeometry(createMeasurementGeometry(
-			type,
-			mapCoordinateTree(coordinates, (coordinate) => {
-				return fromLonLat(encodeByCoordType(coordinate, coordType))
-			})
-		))
-		stopMeasurement()
-	})
-	mapRef.value.addInteraction(measurementDrawInteraction)
-}
-
-function formatMeasurement(measurement) {
-	if (measurement.type === 'distance') {
-		return formatDistance(measurement.distance)
-	}
-	if (measurement.type === 'circle') {
-		return `周长 ${formatDistance(measurement.perimeter)} / 面积 ${formatArea(measurement.area)}`
-	}
-	return formatArea(measurement.area)
-}
-
-function formatDistance(distance) {
-	return distance < 1000
-		? `${distance.toFixed(1)} 米`
-		: `${(distance / 1000).toFixed(3)} 千米`
-}
-
-function formatArea(area) {
-	return area < 1000000
-		? `${area.toFixed(1)} 平方米`
-		: `${(area / 1000000).toFixed(3)} 平方千米`
-}
-
-function removeMeasurement(id) {
-	const feature = measurementSourceRef.value && measurementSourceRef.value.getFeatures().find(
-		(item) => item.get('measurementId') === id
-	)
-	if (feature) {
-		measurementSourceRef.value.removeFeature(feature)
-	}
-	measurements.value = measurements.value.filter((item) => item.id !== id)
-}
-
-function clearMeasurements() {
-	stopMeasurement()
-	if (measurementSourceRef.value) {
-		measurementSourceRef.value.clear(true)
-	}
-	measurements.value = []
 }
 
 function toggleSidebar() {
@@ -718,687 +659,10 @@ function toggleSidebar() {
 	})
 }
 
-function roundCoord(value, digits = 6) {
-	return Number(value.toFixed(digits))
-}
-
-function buildFormBody(data) {
-	return Object.keys(data)
-		.map((key) => `${encodeURIComponent(key)}=${encodeURIComponent(data[key])}`)
-		.join('&')
-}
-
-function resolveAppUrl(path) {
-	if (!path || /^https?:\/\//i.test(path)) {
-		return path
-	}
-
-	if (typeof window === 'undefined') {
-		return path
-	}
-
-	const normalizedPath = path.startsWith('/') ? path : `/${path}`
-	return new URL(normalizedPath, window.location.origin).toString()
-}
-
-function getNextAreaRequestUrl(parentCode) {
-	const path = `/admin/position/nextarea?pid=${encodeURIComponent(String(parentCode))}`
-	return `${positionApiBaseUrl}${path}`
-}
-
-function getAreaSearchUrl(keyword) {
-	return `${positionApiBaseUrl}/admin/position/query?keyword=${encodeURIComponent(keyword)}`
-}
-
-function getSubmitPositionUrl() {
-	return `${positionApiBaseUrl}/admin/position/insert`
-}
-
-function getPositionHistoryUrl(start, end) {
-	return `${positionApiBaseUrl}/admin/position/history?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`
-}
-
-function request(options) {
-	return new Promise((resolve, reject) => {
-		uni.request({
-			...options,
-			url: resolveAppUrl(options.url),
-			withCredentials: true,
-			success: (response) => {
-				if (response.statusCode < 200 || response.statusCode >= 300) {
-					const data = response.data
-					const message = data && typeof data === 'object' && data.message
-						? data.message
-						: `请求失败（HTTP ${response.statusCode}）`
-					reject(new Error(message))
-					return
-				}
-				resolve(response)
-			},
-			fail: reject
-		})
-	})
-}
-
-function handleHistoryDateChange(boundary, event) {
-	const date = String(event.detail.value || '')
-	if (boundary === 'start') {
-		historyStartDate.value = date
-		return
-	}
-	historyEndDate.value = date
-}
-
-function handleHistoryTimeChange(boundary, event) {
-	const time = String(event.detail.value || '')
-	if (boundary === 'start') {
-		historyStartTime.value = time
-		return
-	}
-	historyEndTime.value = time
-}
-
-function startPositionTracking() {
-	if (typeof navigator === 'undefined' || !navigator.geolocation) {
-		uni.showToast({ title: '当前环境不支持定位', icon: 'none' })
-		return
-	}
-	trackingEnabled.value = true
-	if (!startLocationTracking()) {
-		trackingEnabled.value = false
-		uni.showToast({ title: '无法启动持续定位', icon: 'none' })
-		return
-	}
-}
-
-function disableLocationTracking() {
-	trackingEnabled.value = false
-	if (typeof navigator !== 'undefined' && navigator.geolocation && geolocationWatchId.value !== null) {
-		navigator.geolocation.clearWatch(geolocationWatchId.value)
-		geolocationWatchId.value = null
-	}
-}
-
-async function loadPositionHistory() {
-	const start = `${historyStartDate.value} ${historyStartTime.value}`
-	const end = `${historyEndDate.value} ${historyEndTime.value}`
-	if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(start)
-		|| !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(end)
-		|| start > end) {
-		historyError.value = '请选择有效的开始和结束日期时间'
-		return
-	}
-	historyLoading.value = true
-	historyLoaded.value = false
-	historyError.value = ''
-	stopHistoryPlayback()
-	try {
-		const response = await request({
-			url: getPositionHistoryUrl(start, end),
-			method: 'GET'
-		})
-		const payload = response && typeof response === 'object' && 'data' in response
-			? response.data
-			: null
-		if (!payload || payload.success !== true || !Array.isArray(payload.items)) {
-			throw new Error(payload && payload.message ? payload.message : '轨迹数据格式无效')
-		}
-		historyRecords.value = payload.items
-			.filter((item) => item && typeof item.position === 'string' && typeof item.datetime === 'string')
-			.map((item) => {
-				const parts = item.position.split(',').map((part) => Number(part.trim()))
-				if (parts.length !== 2 || !parts.every(Number.isFinite)) {
-					return null
-				}
-				return {
-					id: item.id,
-					datetime: item.datetime,
-					coordinate: gcj02ToWgs84(parts[0], parts[1])
-				}
-			})
-			.filter(Boolean)
-			.map((record, index, records) => {
-				if (index === 0) {
-					return { ...record, speedKmh: null }
-				}
-				const previousRecord = records[index - 1]
-				const elapsedSeconds = (
-					Date.parse(record.datetime.replace(' ', 'T'))
-					- Date.parse(previousRecord.datetime.replace(' ', 'T'))
-				) / 1000
-				const speedKmh = elapsedSeconds > 0
-					? getDistance(previousRecord.coordinate, record.coordinate) / elapsedSeconds * 3.6
-					: null
-				return { ...record, speedKmh: Number.isFinite(speedKmh) ? speedKmh : null }
-			})
-		historyPlaybackIndex.value = 0
-		historyLoaded.value = true
-		renderPositionHistory()
-		if (payload.truncated) {
-			historyError.value = '记录较多，仅显示最早的 5000 个位置点'
-		}
-	} catch (error) {
-		historyRecords.value = []
-		if (historySourceRef.value) {
-			historySourceRef.value.clear(true)
-		}
-		historyError.value = error && error.message ? error.message : '轨迹加载失败'
-	} finally {
-		historyLoading.value = false
-	}
-}
-
-function renderPositionHistory(fitMap = true) {
-	if (!historySourceRef.value) {
-		return
-	}
-	historySourceRef.value.clear(true)
-	historyPlaybackFeature = null
-	if (!historyRecords.value.length) {
-		return
-	}
-
-	const coordType = getLayerConfig().coordType
-	const mapCoordinate = (coordinate) => fromLonLat(encodeByCoordType(coordinate, coordType))
-	const coordinates = historyRecords.value.map((record) => mapCoordinate(record.coordinate))
-
-	if (coordinates.length > 1) {
-		const line = new Feature(new LineString(coordinates))
-		line.setStyle(new Style({
-			stroke: new Stroke({ color: '#1677ff', width: 4 })
-		}))
-		historySourceRef.value.addFeature(line)
-	}
-
-	const pointStyle = new Style({
-		image: new CircleStyle({
-			radius: 4,
-			fill: new Fill({ color: '#ffffff' }),
-			stroke: new Stroke({ color: '#1677ff', width: 2 })
-		})
-	})
-	coordinates.forEach((coordinate) => {
-		const point = new Feature(new Point(coordinate))
-		point.setStyle(pointStyle)
-		historySourceRef.value.addFeature(point)
-	})
-
-	historyPlaybackFeature = new Feature(new Point(coordinates[0]))
-	historyPlaybackFeature.setStyle(new Style({
-		image: new CircleStyle({
-			radius: 8,
-			fill: new Fill({ color: '#e5484d' }),
-			stroke: new Stroke({ color: '#ffffff', width: 3 })
-		}),
-		text: new Text({
-			text: formatHistoryPlaybackLabel(historyRecords.value[0]),
-			offsetY: -18,
-			font: '600 12px sans-serif',
-			fill: new Fill({ color: '#183153' }),
-			backgroundFill: new Fill({ color: 'rgba(255,255,255,0.9)' }),
-			padding: [3, 5, 3, 5]
-		})
-	}))
-	historySourceRef.value.addFeature(historyPlaybackFeature)
-	setHistoryPlaybackIndex(historyPlaybackIndex.value)
-	if (fitMap && coordinates.length > 1) {
-		mapRef.value.getView().fit(new LineString(coordinates).getExtent(), {
-			padding: [60, 60, 60, 60],
-			maxZoom: 16,
-			duration: 300
-		})
-	}
-}
-
-function setHistoryPlaybackIndex(value, recenter = false) {
-	if (!historyRecords.value.length) {
-		return
-	}
-	const index = Math.max(0, Math.min(historyRecords.value.length - 1, Math.round(Number(value) || 0)))
-	historyPlaybackIndex.value = index
-	const record = historyRecords.value[index]
-	if (!record || !historyPlaybackFeature) {
-		return
-	}
-	const coordType = getLayerConfig().coordType
-	const coordinate = fromLonLat(encodeByCoordType(record.coordinate, coordType))
-	historyPlaybackFeature.getGeometry().setCoordinates(coordinate)
-	historyPlaybackFeature.getStyle().getText().setText(formatHistoryPlaybackLabel(record))
-	if (recenter && viewRef.value) {
-		viewRef.value.animate({ center: coordinate, duration: 250 })
-	}
-}
-
-function formatHistoryPlaybackLabel(record) {
-	const speed = record.speedKmh === null ? '--' : `${record.speedKmh.toFixed(1)} km/h`
-	return `${record.datetime}\n速度：${speed}`
-}
-
-function seekHistoryPlayback(event) {
-	stopHistoryPlayback()
-	setHistoryPlaybackIndex(event.detail.value, true)
-}
-
-function toggleHistoryPlayback() {
-	if (historyPlaying.value) {
-		stopHistoryPlayback()
-		return
-	}
-	if (historyRecords.value.length < 2) {
-		return
-	}
-	if (historyPlaybackIndex.value >= historyRecords.value.length - 1) {
-		setHistoryPlaybackIndex(0, true)
-	}
-	historyPlaying.value = true
-	playbackTimer = setInterval(() => {
-		const nextIndex = historyPlaybackIndex.value + 1
-		if (nextIndex >= historyRecords.value.length) {
-			stopHistoryPlayback()
-			return
-		}
-		setHistoryPlaybackIndex(nextIndex, true)
-	}, 1000)
-}
-
-function stopHistoryPlayback() {
-	if (playbackTimer !== null) {
-		clearInterval(playbackTimer)
-		playbackTimer = null
-	}
-	historyPlaying.value = false
-}
-
-function getUserAgentText() {
-	if (typeof navigator === 'undefined') {
-		return 'unknown'
-	}
-
-	const ua = navigator.userAgent
-	const result = []
-	if (/Trident/i.test(ua)) result.push('IE')
-	if (/Win64|Win32/i.test(ua)) result.push('windows平台')
-	if (/Presto/i.test(ua)) result.push('Opera')
-	if (/AppleWebKit/i.test(ua)) result.push('WebKit')
-	if (/Gecko/i.test(ua) && !/KHTML/i.test(ua)) result.push('Firefox')
-	if (/Mobile/i.test(ua)) result.push('移动端')
-	if (/iPhone/i.test(ua)) result.push('iPhone or QQHD')
-	if (/iPad/i.test(ua)) result.push('iPad')
-	if (/MicroMessenger/i.test(ua)) result.push('微信')
-	if (/\sQQ/i.test(ua)) result.push('QQ')
-	if (/Android|Adr/i.test(ua)) result.push('Android')
-	if (/CPU.+Mac OS X/i.test(ua)) result.push('IOS')
-	return result.join(',') || ua
-}
-
-async function submitUserPosition(wgs84) {
-	if (!trackingEnabled.value || historySubmissionPending) {
-		return
-	}
-
-	const gcj02 = wgs84ToGcj02(wgs84[0], wgs84[1])
-	const positionText = `${roundCoord(gcj02[0])},${roundCoord(gcj02[1])}`
-
-	historySubmissionPending = true
-	try {
-		const response = await request({
-			url: getSubmitPositionUrl(),
-			method: 'POST',
-			header: {
-				'content-type': 'application/x-www-form-urlencoded'
-			},
-			data: buildFormBody({
-				position: positionText,
-				useragent: getUserAgentText()
-			})
-		})
-		const result = response && typeof response === 'object' && 'data' in response
-			? response.data
-			: null
-		if (!result || result.success !== true) {
-			throw new Error(result && result.message ? result.message : '位置记录失败')
-		}
-		if (result && typeof result === 'object' && result.warning) {
-			console.warn('位置坐标已记录，但部分地址信息不可用', result.warning)
-		}
-	} catch (error) {
-		console.warn('定位信息上报失败', error)
-		disableLocationTracking()
-		uni.showToast({ title: error && error.message ? error.message : '位置记录失败', icon: 'none' })
-	} finally {
-		historySubmissionPending = false
-	}
-}
-
-async function loadNextAreas(parentCode, groupIndex) {
-	try {
-		const response = await request({
-			url: getNextAreaRequestUrl(parentCode),
-			method: 'GET'
-		})
-		console.log("loadNextAreas:",response)
-		const rawPayload = response && typeof response === 'object' && 'data' in response
-			? response.data
-			: response
-		const payload = typeof rawPayload === 'string'
-			? parseAreaPayload(rawPayload)
-			: rawPayload
-
-		if (!Array.isArray(payload) || !payload.length) {
-			return
-		}
-
-		const parentOption = areaGroups.value[groupIndex].options.find((item) => item.code === parentCode)
-		const nextOptions = payload
-			.filter((item) => item && item.code && item.name)
-			.map((item) => ({
-				code: String(item.code),
-				name: String(item.name),
-				status: 1,
-				level: Number(item.level || groupIndex + 2),
-				pcode: String(item.pcode || parentCode),
-				category: String(item.category || '0'),
-				coordType: 'gcj02',
-				position: [parseFloat(item.lng), parseFloat(item.lat)]
-			}))
-			.filter((item) => Number.isFinite(item.position[0]) && Number.isFinite(item.position[1]))
-
-		if (!nextOptions.length) {
-			return
-		}
-
-		areaGroups.value.push({
-			key: `level-${groupIndex + 2}`,
-			selectedCode: '0',
-			options: [{ code: '0', name: '--上一级--', status: 0, level: parentOption ? parentOption.level : groupIndex + 1 }].concat(nextOptions)
-		})
-		if (parentOption && parentOption.position) {
-			panToArea(parentOption.position, parentOption.level, parentOption.coordType)
-		}
-	} catch (error) {
-		console.warn('加载下级行政区失败', error)
-		const isLocalDev = typeof window !== 'undefined' && /^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname)
-		uni.showToast({
-			title: isLocalDev ? '本地调试接口失败，请检查代理' : (error && error.message ? error.message : '行政区加载失败'),
-			icon: 'none'
-		})
-	}
-}
-
-function parseAreaPayload(rawText) {
-	const text = String(rawText || '').trim()
-	if (!text) {
-		return []
-	}
-
-	if (text.startsWith('<!DOCTYPE') || text.startsWith('<html')) {
-		throw new Error('接口返回了 HTML，请检查请求路径或代理配置')
-	}
-
-	return JSON.parse(text)
-}
-
-function handleAreaSearchInput(event) {
-	areaSearchKeyword.value = String(event && event.detail ? event.detail.value : '')
-	areaSearchResults.value = []
-	areaSearchError.value = ''
-	areaSearchHasSearched.value = false
-	areaSearchRequestId += 1
-	areaSearchLoading.value = false
-
-	if (areaSearchTimer) {
-		clearTimeout(areaSearchTimer)
-		areaSearchTimer = null
-	}
-
-	const keyword = areaSearchKeyword.value.trim()
-	if (!keyword) {
-		return
-	}
-
-	const requestId = areaSearchRequestId
-	areaSearchTimer = setTimeout(() => {
-		areaSearchTimer = null
-		void searchAreas(keyword, requestId)
-	}, 300)
-}
-
-function searchAreasNow() {
-	if (areaSearchTimer) {
-		clearTimeout(areaSearchTimer)
-		areaSearchTimer = null
-	}
-	areaSearchRequestId += 1
-	void searchAreas(areaSearchKeyword.value.trim(), areaSearchRequestId)
-}
-
-async function searchAreas(keyword, requestId) {
-	if (!keyword) {
-		areaSearchResults.value = []
-		areaSearchHasSearched.value = false
-		areaSearchError.value = ''
-		areaSearchLoading.value = false
-		return
-	}
-
-	areaSearchLoading.value = true
-	areaSearchHasSearched.value = true
-	areaSearchError.value = ''
-	try {
-		const response = await request({
-			url: getAreaSearchUrl(keyword),
-			method: 'GET'
-		})
-		const rawPayload = response && typeof response === 'object' && 'data' in response
-			? response.data
-			: response
-		const payload = typeof rawPayload === 'string'
-			? parseAreaPayload(rawPayload)
-			: rawPayload
-		if (!Array.isArray(payload)) {
-			throw new Error('地点查询接口返回格式无效')
-		}
-
-		if (requestId !== areaSearchRequestId) {
-			return
-		}
-		areaSearchResults.value = payload
-			.filter((item) => item && item.code && item.name)
-			.map((item) => ({
-				...item,
-				code: String(item.code),
-				level: Number(item.level),
-				position: [Number(item.lng), Number(item.lat)]
-			}))
-			.filter((item) => Number.isFinite(item.position[0]) && Number.isFinite(item.position[1]))
-	} catch (error) {
-		if (requestId !== areaSearchRequestId) {
-			return
-		}
-		console.warn('查询行政区失败', error)
-		areaSearchError.value = error && error.message ? error.message : '地点查询失败，请稍后重试'
-		areaSearchResults.value = []
-	} finally {
-		if (requestId === areaSearchRequestId) {
-			areaSearchLoading.value = false
-		}
-	}
-}
-
-function selectSearchResult(result) {
-	panToArea(result.position, result.level, 'gcj02')
-	areaSearchKeyword.value = result.name
-	areaSearchResults.value = []
-	areaSearchHasSearched.value = false
-	areaSearchError.value = ''
-}
-
-function panToArea(position, level, coordType = 'gcj02') {
-	if (!Array.isArray(position) || position.length < 2) {
-		return
-	}
-
-	const sourceCoord = [Number(position[0]), Number(position[1])]
-	markerSourceWgs84.value = coordType === 'gcj02'
-		? gcj02ToWgs84(sourceCoord[0], sourceCoord[1])
-		: sourceCoord
-	setMapCenterByWgs84(markerSourceWgs84.value, AREA_ZOOMS[Math.max(0, Math.min((level || 1) - 1, AREA_ZOOMS.length - 1))])
-	renderMarker()
-}
-
-async function handleAreaChange(groupIndex, event) {
-	const targetGroup = areaGroups.value[groupIndex]
-	const option = targetGroup.options[event.detail.value]
-	if (!option) {
-		return
-	}
-
-	targetGroup.selectedCode = option.code
-	areaGroups.value = areaGroups.value.slice(0, groupIndex + 1)
-	if (option.position) {
-		panToArea(option.position, option.level, option.coordType)
-	}
-
-	if (option.status === 1) {
-		await loadNextAreas(option.code, groupIndex)
-	}
-}
-
-async function handleGeolocationSuccess(position, keepCurrentZoom = false) {
-	locating.value = false
-	const wgs84 = [position.coords.longitude, position.coords.latitude]
-	markerSourceWgs84.value = wgs84
-	userLocationWgs84.value = wgs84
-	currentAccuracy.value = position.coords.accuracy || 0
-	hasLocated.value = true
-	locationLabel.value = `定位成功 ${roundCoord(wgs84[0], 4)}, ${roundCoord(wgs84[1], 4)}`
-	setMapCenterByWgs84(wgs84, keepCurrentZoom && viewRef.value ? viewRef.value.getZoom() : GEO_ZOOM)
-	renderMarker()
-	if (trackingEnabled.value) {
-		await submitUserPosition(wgs84)
-	}
-}
-
-function startLocationTracking() {
-	if (typeof navigator === 'undefined' || !navigator.geolocation) {
-		return false
-	}
-
-	if (geolocationWatchId.value !== null) {
-		return true
-	}
-
-	geolocationWatchId.value = navigator.geolocation.watchPosition(
-		async (position) => {
-			await handleGeolocationSuccess(position, true)
-		},
-		(error) => {
-			console.warn('持续定位失败', error)
-		},
-		{
-			enableHighAccuracy: true,
-			timeout: 12000,
-			maximumAge: 0
-		}
-	)
-
-	return true
-}
-
-function locateMe() {
-	if (typeof navigator === 'undefined' || !navigator.geolocation || locating.value) {
-		uni.showToast({ title: '当前环境不支持定位', icon: 'none' })
-		return
-	}
-
-	locating.value = true
-	navigator.geolocation.getCurrentPosition(
-		async (position) => {
-			await handleGeolocationSuccess(position)
-		},
-		(error) => {
-			locating.value = false
-			locationLabel.value = ''
-			console.warn('定位失败', error)
-			uni.showToast({ title: '定位失败，请检查浏览器权限', icon: 'none' })
-		},
-		{
-			enableHighAccuracy: true,
-			timeout: 12000,
-			maximumAge: 0
-		}
-	)
-}
-
-function recenterToUser() {
-	if (!userLocationWgs84.value) {
-		locateMe()
-		return
-	}
-
-	setMapCenterByWgs84(userLocationWgs84.value, GEO_ZOOM)
-	renderMarker()
-}
-
 function openLink(url) {
 	if (typeof window !== 'undefined') {
 		window.open(resolveAppUrl(url), '_blank')
 	}
-}
-
-function buildBaseLayers() {
-	const tengxun = new TileLayer({
-		source: new XYZ({
-			url: 'https://rt0.map.gtimg.com/realtimerender?z={z}&x={x}&y={-y}&type=vector&style=0'
-		}),
-		visible: true
-	})
-	tengxun.set('role', 'base')
-	tengxun.set('layerKey', 'tengxun')
-
-	const osm = new TileLayer({ source: new OSM(), visible: false })
-	osm.set('role', 'base')
-	osm.set('layerKey', 'osm')
-
-	const google = new TileLayer({
-		source: new XYZ({
-			url: 'https://mt0.google.com/vt/lyrs=s&hl=en&x={x}&y={y}&z={z}&s=Ga'
-		}),
-		visible: false
-	})
-	google.set('role', 'base')
-	google.set('layerKey', 'google')
-
-	const gaode = new TileLayer({
-		source: new XYZ({
-			url: 'https://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}'
-		}),
-		visible: false
-	})
-	gaode.set('role', 'base')
-	gaode.set('layerKey', 'gaode')
-
-	const arcgis = new TileLayer({
-		source: new XYZ({
-			url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
-		}),
-		visible: false
-	})
-	arcgis.set('role', 'base')
-	arcgis.set('layerKey', 'arcgis')
-
-	const nasa = new TileLayer({
-		source: new XYZ({
-			url: 'https://v.cpxiang.tech/tiles/{z}/{x}/{y}.webp',
-			crossOrigin: 'anonymous',
-			maxZoom: 8
-		}),
-		visible: false
-	})
-	nasa.set('role', 'base')
-	nasa.set('layerKey', 'nasa')
-
-	return [tengxun, osm, google, gaode, arcgis, nasa]
 }
 
 async function initMap() {
@@ -1432,11 +696,15 @@ async function initMap() {
 	const historySource = new VectorSource()
 	const historyLayer = new VectorLayer({ source: historySource })
 	historyLayer.set('role', 'history')
+	const routeSource = new VectorSource()
+	const routeLayer = new VectorLayer({ source: routeSource })
+	routeLayer.set('role', 'route')
 
 	positionFeatureRef.value = positionFeature
 	accuracyFeatureRef.value = accuracyFeature
 	measurementSourceRef.value = measurementSource
 	historySourceRef.value = historySource
+	routeSourceRef.value = routeSource
 	markerSourceWgs84.value = null
 
 	viewRef.value = new View({
@@ -1448,18 +716,27 @@ async function initMap() {
 
 	mapRef.value = new Map({
 		target: 'ol-map',
-		layers: buildBaseLayers().concat(overlayLayer, historyLayer, measurementLayer),
+		layers: buildBaseLayers().concat(routeLayer, overlayLayer, historyLayer, measurementLayer),
 		view: viewRef.value,
 		controls: defaultControls().extend([
 			new ScaleLine({ units: 'metric' })
 		])
 	})
+	mapTargetElement.value = mapRef.value.getTargetElement()
+	if (mapTargetElement.value) {
+		mapTargetElement.value.addEventListener('contextmenu', handleMapContextMenu)
+	}
+	mapRef.value.on('singleclick', closeRouteContextMenu)
+	if (typeof document !== 'undefined') {
+		document.addEventListener('pointerdown', handleDocumentPointerDown)
+	}
 
 	viewRef.value.on('change:resolution', () => {
 		updateLayerAvailability()
 	})
 
 	renderMarker()
+	renderRoute()
 	updateLayerAvailability()
 	}
 
@@ -1469,21 +746,27 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-	if (areaSearchTimer) {
-		clearTimeout(areaSearchTimer)
-		areaSearchTimer = null
-	}
-	areaSearchRequestId += 1
 	disableLocationTracking()
 	stopHistoryPlayback()
 	stopMeasurement()
+	if (mapTargetElement.value) {
+		mapTargetElement.value.removeEventListener('contextmenu', handleMapContextMenu)
+	}
+	if (typeof document !== 'undefined') {
+		document.removeEventListener('pointerdown', handleDocumentPointerDown)
+	}
+	if (mapRef.value) {
+		mapRef.value.un('singleclick', closeRouteContextMenu)
+	}
 	if (mapRef.value) {
 		mapRef.value.setTarget(undefined)
 	}
+	mapTargetElement.value = null
 	positionFeatureRef.value = null
 	accuracyFeatureRef.value = null
 	measurementSourceRef.value = null
 	historySourceRef.value = null
+	routeSourceRef.value = null
 })
 </script>
 
@@ -1622,43 +905,17 @@ onBeforeUnmount(() => {
 	color: #0f766e;
 }
 
-.toolbar-card {
-	margin-top: 24rpx;
-	padding: 22rpx;
-	border-radius: 24rpx;
-	background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(247, 244, 236, 0.92));
-	border: 2rpx solid rgba(188, 108, 37, 0.12);
-}
-
-.toolbar-head {
-	display: flex;
-	justify-content: space-between;
-	align-items: center;
-	gap: 16rpx;
-	flex-wrap: wrap;
-}
-
-.toolbar-title {
-	font-size: 30rpx;
-	font-weight: 700;
-	color: #243b53;
-}
-
 .link-actions {
 	display: flex;
+	align-items: center;
 	gap: 20rpx;
+	margin-left: auto;
 }
 
 .link-action {
 	font-size: 26rpx;
 	font-weight: 600;
 	color: #0f766e;
-}
-
-.place-search {
-	position: relative;
-	z-index: 2;
-	margin-top: 18rpx;
 }
 
 .place-search-input {
@@ -1673,35 +930,6 @@ onBeforeUnmount(() => {
 	color: #243b53;
 }
 
-.place-search-results {
-	margin-top: 8rpx;
-	border: 2rpx solid rgba(36, 59, 83, 0.08);
-	border-radius: 16rpx;
-	background: #fffdfa;
-	box-shadow: 0 10rpx 24rpx rgba(36, 59, 83, 0.08);
-	overflow: hidden;
-}
-
-.place-search-result {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 16rpx;
-	padding: 18rpx 20rpx;
-	border-bottom: 1rpx solid rgba(36, 59, 83, 0.08);
-}
-
-.place-search-result:last-child {
-	border-bottom: 0;
-}
-
-.place-search-name {
-	font-size: 26rpx;
-	font-weight: 600;
-	color: #243b53;
-}
-
-.place-search-meta,
 .place-search-message {
 	font-size: 22rpx;
 	color: #7b8794;
@@ -1714,6 +942,147 @@ onBeforeUnmount(() => {
 
 .place-search-error {
 	color: #b42318;
+}
+
+.route-card {
+	margin-top: 18rpx;
+	padding: 20rpx;
+	border: 2rpx solid rgba(22, 119, 255, 0.18);
+	border-radius: 20rpx;
+	background: rgba(22, 119, 255, 0.04);
+}
+
+.route-title {
+	display: block;
+	margin-bottom: 12rpx;
+	font-size: 28rpx;
+	font-weight: 700;
+	color: #243b53;
+}
+
+.route-pick-hint {
+	display: block;
+	margin-top: 8rpx;
+	font-size: 21rpx;
+	line-height: 1.5;
+	color: #627d98;
+}
+
+.route-input {
+	margin-top: 10rpx;
+}
+
+.route-modes,
+.route-actions {
+	display: flex;
+	align-items: center;
+	gap: 10rpx;
+	margin-top: 12rpx;
+}
+
+.route-mode-button,
+.route-clear-button {
+	margin: 0;
+	padding: 0 16rpx;
+	height: 62rpx;
+	line-height: 62rpx;
+	border: 0;
+	border-radius: 14rpx;
+	background: #e8edf2;
+	color: #243b53;
+	font-size: 22rpx;
+}
+
+.route-mode-button::after,
+.route-clear-button::after {
+	border: 0;
+}
+
+.route-mode-button.active {
+	background: #1677ff;
+	color: #ffffff;
+}
+
+.route-mode-button.disabled {
+	background: #e5e7eb;
+	color: #9ca3af;
+	opacity: 1;
+	cursor: not-allowed;
+}
+
+.route-clear-button {
+	background: #fff0ed;
+	color: #b42318;
+}
+
+.route-options {
+	margin-top: 12rpx;
+	border: 1rpx solid rgba(36, 59, 83, 0.1);
+	border-radius: 14rpx;
+	overflow: hidden;
+}
+
+.route-option {
+	display: flex;
+	flex-direction: column;
+	gap: 4rpx;
+	padding: 14rpx 16rpx;
+	border-bottom: 1rpx solid rgba(36, 59, 83, 0.08);
+	background: #fffdfa;
+}
+
+.route-option:last-child {
+	border-bottom: 0;
+}
+
+.route-option.active,
+.route-option.previewing {
+	background: rgba(22, 119, 255, 0.1);
+}
+
+.route-option-title {
+	font-size: 23rpx;
+	font-weight: 700;
+	color: #243b53;
+}
+
+.route-option-meta,
+.route-disclaimer {
+	font-size: 21rpx;
+	color: #627d98;
+}
+
+.route-steps {
+	max-height: 360rpx;
+	margin-top: 12rpx;
+	overflow-y: auto;
+}
+
+.route-step {
+	display: flex;
+	justify-content: space-between;
+	gap: 12rpx;
+	padding: 10rpx 2rpx;
+	border-bottom: 1rpx solid rgba(36, 59, 83, 0.08);
+}
+
+.route-step-instruction {
+	flex: 1;
+	font-size: 22rpx;
+	line-height: 1.5;
+	color: #243b53;
+}
+
+.route-step-distance {
+	flex: none;
+	font-size: 20rpx;
+	color: #7b8794;
+}
+
+.route-disclaimer {
+	display: block;
+	margin-top: 10rpx;
+	line-height: 1.5;
 }
 
 .history-card {
@@ -1851,37 +1220,6 @@ onBeforeUnmount(() => {
 	color: #52606d;
 }
 
-.select-grid {
-	display: grid;
-	grid-template-columns: minmax(0, 1fr);
-	gap: 16rpx;
-	margin-top: 18rpx;
-}
-
-.select-card {
-	padding: 18rpx 20rpx;
-	min-height: 112rpx;
-	border-radius: 20rpx;
-	background: #fffdfa;
-	border: 2rpx solid rgba(36, 59, 83, 0.08);
-	box-shadow: inset 0 0 0 1rpx rgba(255, 255, 255, 0.4);
-}
-
-.select-label {
-	display: block;
-	font-size: 22rpx;
-	color: #7b8794;
-}
-
-.select-value {
-	display: block;
-	margin-top: 10rpx;
-	font-size: 28rpx;
-	line-height: 1.4;
-	font-weight: 600;
-	color: #243b53;
-}
-
 .map-panel {
 	position: relative;
 	height: 60vh;
@@ -1925,6 +1263,64 @@ onBeforeUnmount(() => {
 .map-canvas {
 	width: 100%;
 	height: 100%;
+}
+
+.route-map-hint {
+	position: absolute;
+	z-index: 3;
+	left: 12px;
+	bottom: 12px;
+	max-width: calc(100% - 24px);
+	padding: 8px 12px;
+	border: 1px solid rgba(24, 49, 83, 0.12);
+	border-radius: 8px;
+	background: rgba(255, 253, 250, 0.94);
+	box-shadow: 0 4px 12px rgba(24, 49, 83, 0.12);
+	color: #243b53;
+	font-size: 12px;
+	pointer-events: none;
+}
+
+.route-context-menu {
+	position: absolute;
+	z-index: 10;
+	box-sizing: border-box;
+	width: 188px;
+	padding: 8px;
+	border: 1px solid rgba(24, 49, 83, 0.14);
+	border-radius: 10px;
+	background: #fffdfa;
+	box-shadow: 0 10px 28px rgba(24, 49, 83, 0.24);
+}
+
+.route-context-title,
+.route-context-coordinate {
+	display: block;
+	padding: 4px 8px;
+}
+
+.route-context-title {
+	font-size: 13px;
+	font-weight: 700;
+	color: #243b53;
+}
+
+.route-context-coordinate {
+	font-size: 11px;
+	color: #627d98;
+}
+
+.route-context-action {
+	padding: 9px 8px;
+	border-radius: 6px;
+	color: #243b53;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+.route-context-action:hover {
+	background: rgba(22, 119, 255, 0.1);
+	color: #1677ff;
 }
 
 .measurement-tools {
@@ -2176,10 +1572,6 @@ onBeforeUnmount(() => {
 
 	.hero-panel {
 		padding: 24px;
-	}
-
-	.select-grid {
-		grid-template-columns: minmax(0, 1fr);
 	}
 
 	.map-panel {
