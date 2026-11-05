@@ -6,7 +6,7 @@ export default defineConfig({
 	server: {
 		proxy: {
 			'/admin/position': {
-				target: 'http://oladmin.cc',
+				target: 'https://oladmin.cc',
 				changeOrigin: true,
 				configure: (proxy) => {
 					proxy.on('proxyReq', (proxyRequest) => {
