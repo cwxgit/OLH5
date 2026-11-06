@@ -277,7 +277,6 @@
 
 			<view class="map-panel">
 				<button v-if="!sidebarVisible" class="sidebar-toggle sidebar-toggle-floating" @click="toggleSidebar">显示控制栏</button>
-				<view class="route-map-hint">鼠标右击地图选择路线起点或终点</view>
 				<view class="measurement-tools">
 					<view class="measurement-buttons">
 						<button
@@ -1712,22 +1711,6 @@ onBeforeUnmount(() => {
 .map-canvas {
 	width: 100%;
 	height: 100%;
-}
-
-.route-map-hint {
-	position: absolute;
-	z-index: 3;
-	left: 12px;
-	bottom: 12px;
-	max-width: calc(100% - 24px);
-	padding: 8px 12px;
-	border: 1px solid rgba(24, 49, 83, 0.12);
-	border-radius: 8px;
-	background: rgba(255, 253, 250, 0.94);
-	box-shadow: 0 4px 12px rgba(24, 49, 83, 0.12);
-	color: #243b53;
-	font-size: 12px;
-	pointer-events: none;
 }
 
 .route-context-menu {
