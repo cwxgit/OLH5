@@ -27,6 +27,44 @@
 						<text v-if="locationLabel" class="status-pill success-pill">{{ locationLabel }}</text>
 					</view>
 
+					<view class="place-search-card">
+						<text class="route-title">地点搜索</text>
+						<view class="place-search-row">
+							<input
+								class="place-search-input"
+								type="text"
+								:value="placeSearchKeyword"
+								placeholder="输入地点名称"
+								confirm-type="search"
+								@input="placeSearchKeyword = $event.detail.value"
+								@confirm="searchPlaces"
+							/>
+							<button class="history-button place-search-button" :disabled="placeSearchLoading" @click="searchPlaces">
+								{{ placeSearchLoading ? '搜索中…' : '搜索' }}
+							</button>
+						</view>
+						<text v-if="placeSearchError" class="place-search-message place-search-error">{{ placeSearchError }}</text>
+						<view v-if="placeSearchResults.length" class="place-search-results">
+							<view class="place-search-results-head">
+								<text class="place-search-results-count">搜索结果（{{ placeSearchResults.length }}）</text>
+								<text class="place-search-clear" role="button" @click.stop="clearPlaceSearch">×</text>
+							</view>
+							<view
+								v-for="place in placeSearchResults"
+								:key="place.code"
+								class="place-search-result"
+								:class="{ active: selectedPlaceCode === place.code }"
+								@click="selectPlace(place)"
+							>
+								<text class="place-search-result-name">{{ place.name }}</text>
+								<text class="place-search-result-hint">点击定位</text>
+							</view>
+						</view>
+						<text v-else-if="placeSearchLoaded && !placeSearchError" class="place-search-message">
+							没有找到匹配的地点
+						</text>
+					</view>
+
 					<view class="route-card">
 						<text class="route-title">国内路线规划</text>
 						<input
@@ -327,7 +365,7 @@ import Feature from 'ol/Feature'
 import Point from 'ol/geom/Point'
 import CircleGeom from 'ol/geom/Circle'
 import { defaults as defaultControls, ScaleLine } from 'ol/control'
-import { Fill, Stroke, Style, Circle as CircleStyle } from 'ol/style'
+import { Fill, Stroke, Style, Text, Circle as CircleStyle } from 'ol/style'
 import { fromLonLat, toLonLat } from 'ol/proj'
 import { gcj02ToWgs84, wgs84ToGcj02 } from '../../utils/coordTransform'
 import { useMeasurements } from '../../composables/useMeasurements'
@@ -336,8 +374,10 @@ import { usePositionHistory } from '../../composables/usePositionHistory'
 import { useRoutePlanner } from '../../composables/useRoutePlanner'
 import { buildBaseLayers } from '../../utils/mapLayers'
 import {
+	getPlaceSearchUrl,
 	loginUrl,
 	registerUrl,
+	request,
 	resolveAppUrl
 } from '../../utils/positionApi'
 
@@ -355,6 +395,7 @@ const viewRef = ref(null)
 const measurementSourceRef = ref(null)
 const historySourceRef = ref(null)
 const routeSourceRef = ref(null)
+const placeSearchSourceRef = ref(null)
 const mapTargetElement = ref(null)
 const sidebarVisible = ref(true)
 const positionFeatureRef = ref(null)
@@ -380,6 +421,14 @@ const historyPlaying = ref(false)
 const historyLoading = ref(false)
 const historyLoaded = ref(false)
 const historyError = ref('')
+const placeSearchKeyword = ref('')
+const placeSearchResults = ref([])
+const placeSearchLoading = ref(false)
+const placeSearchLoaded = ref(false)
+const placeSearchError = ref('')
+const selectedPlaceCode = ref(null)
+const selectedPlace = ref(null)
+let placeSearchRequestId = 0
 const routeContextMenu = reactive({
 	visible: false,
 	left: 0,
@@ -707,6 +756,7 @@ function changeLayer(key) {
 	renderMeasurements()
 	renderRoute()
 	renderPositionHistory(false)
+	renderPlaceSearchMarker()
 }
 
 function toggleSidebar() {
@@ -720,6 +770,138 @@ function openLink(url) {
 	if (typeof window !== 'undefined') {
 		window.open(resolveAppUrl(url), '_blank')
 	}
+}
+
+async function searchPlaces() {
+	const requestId = ++placeSearchRequestId
+	const keyword = placeSearchKeyword.value.trim()
+	selectedPlaceCode.value = null
+	selectedPlace.value = null
+	renderPlaceSearchMarker()
+	if (!keyword || Array.from(keyword).length > 100) {
+		placeSearchResults.value = []
+		placeSearchLoading.value = false
+		placeSearchLoaded.value = false
+		placeSearchError.value = '请输入地点名称（最多100个字符）'
+		return
+	}
+
+	placeSearchLoading.value = true
+	placeSearchLoaded.value = false
+	placeSearchError.value = ''
+	try {
+		const response = await request({
+			url: getPlaceSearchUrl(keyword),
+			method: 'GET'
+		})
+		if (requestId !== placeSearchRequestId) {
+			return
+		}
+		const payload = response && typeof response === 'object' && 'data' in response
+			? response.data
+			: null
+		if (!Array.isArray(payload)) {
+			throw new Error(payload && payload.message ? payload.message : '地点搜索结果格式无效')
+		}
+		placeSearchResults.value = payload
+			.filter((place) => place
+				&& place.code !== undefined
+				&& place.code !== null
+				&& typeof place.name === 'string'
+				&& place.name.trim() !== ''
+				&& place.lng !== undefined
+				&& place.lng !== null
+				&& place.lng !== ''
+				&& place.lat !== undefined
+				&& place.lat !== null
+				&& place.lat !== '')
+			.map((place) => ({
+				...place,
+				lng: Number(place.lng),
+				lat: Number(place.lat)
+			}))
+			.filter((place) => Number.isFinite(place.lng) && Number.isFinite(place.lat)
+				&& place.lng >= -180 && place.lng <= 180
+				&& place.lat >= -90 && place.lat <= 90)
+			.slice(0, 50)
+		if (payload.length && !placeSearchResults.value.length) {
+			throw new Error('地点搜索结果缺少有效名称或坐标')
+		}
+		placeSearchLoaded.value = true
+	} catch (error) {
+		if (requestId !== placeSearchRequestId) {
+			return
+		}
+		placeSearchResults.value = []
+		selectedPlaceCode.value = null
+		selectedPlace.value = null
+		renderPlaceSearchMarker()
+		placeSearchError.value = error && error.message ? error.message : '地点搜索失败'
+	} finally {
+		if (requestId === placeSearchRequestId) {
+			placeSearchLoading.value = false
+		}
+	}
+}
+
+function clearPlaceSearch() {
+	placeSearchRequestId += 1
+	placeSearchKeyword.value = ''
+	placeSearchResults.value = []
+	placeSearchLoading.value = false
+	placeSearchLoaded.value = false
+	placeSearchError.value = ''
+	selectedPlaceCode.value = null
+	selectedPlace.value = null
+	renderPlaceSearchMarker()
+}
+
+function selectPlace(place) {
+	selectedPlaceCode.value = place.code
+	selectedPlace.value = place
+	const displayCoord = getPlaceDisplayCoordinate([place.lng, place.lat])
+	if (viewRef.value) {
+		viewRef.value.setCenter(fromLonLat(displayCoord))
+		viewRef.value.setZoom(GEO_ZOOM)
+	}
+	renderPlaceSearchMarker()
+}
+
+function getPlaceDisplayCoordinate(gcj02) {
+	return getLayerConfig().coordType === 'gcj02'
+		? gcj02
+		: gcj02ToWgs84(gcj02[0], gcj02[1])
+}
+
+function renderPlaceSearchMarker() {
+	if (!placeSearchSourceRef.value) {
+		return
+	}
+	placeSearchSourceRef.value.clear(true)
+	if (!selectedPlace.value) {
+		return
+	}
+
+	const displayCoord = getPlaceDisplayCoordinate([selectedPlace.value.lng, selectedPlace.value.lat])
+	const feature = new Feature({
+		geometry: new Point(fromLonLat(displayCoord))
+	})
+	feature.setStyle(new Style({
+		image: new CircleStyle({
+			radius: 9,
+			fill: new Fill({ color: '#e5484d' }),
+			stroke: new Stroke({ color: '#ffffff', width: 3 })
+		}),
+		text: new Text({
+			text: selectedPlace.value.name,
+			offsetY: -20,
+			padding: [4, 6, 4, 6],
+			fill: new Fill({ color: '#183153' }),
+			stroke: new Stroke({ color: '#ffffff', width: 3 }),
+			backgroundFill: new Fill({ color: '#ffffff' })
+		})
+	}))
+	placeSearchSourceRef.value.addFeature(feature)
 }
 
 async function initMap() {
@@ -756,12 +938,16 @@ async function initMap() {
 	const routeSource = new VectorSource()
 	const routeLayer = new VectorLayer({ source: routeSource })
 	routeLayer.set('role', 'route')
+	const placeSearchSource = new VectorSource()
+	const placeSearchLayer = new VectorLayer({ source: placeSearchSource })
+	placeSearchLayer.set('role', 'place-search')
 
 	positionFeatureRef.value = positionFeature
 	accuracyFeatureRef.value = accuracyFeature
 	measurementSourceRef.value = measurementSource
 	historySourceRef.value = historySource
 	routeSourceRef.value = routeSource
+	placeSearchSourceRef.value = placeSearchSource
 	markerSourceWgs84.value = null
 
 	viewRef.value = new View({
@@ -773,7 +959,7 @@ async function initMap() {
 
 	mapRef.value = new Map({
 		target: 'ol-map',
-		layers: buildBaseLayers().concat(routeLayer, overlayLayer, historyLayer, measurementLayer),
+		layers: buildBaseLayers().concat(routeLayer, overlayLayer, historyLayer, measurementLayer, placeSearchLayer),
 		view: viewRef.value,
 		controls: defaultControls().extend([
 			new ScaleLine({ units: 'metric' })
@@ -794,6 +980,7 @@ async function initMap() {
 
 	renderMarker()
 	renderRoute()
+	renderPlaceSearchMarker()
 	updateLayerAvailability()
 	}
 
@@ -825,6 +1012,7 @@ onBeforeUnmount(() => {
 	measurementSourceRef.value = null
 	historySourceRef.value = null
 	routeSourceRef.value = null
+	placeSearchSourceRef.value = null
 })
 </script>
 
@@ -1000,6 +1188,90 @@ onBeforeUnmount(() => {
 
 .place-search-error {
 	color: #b42318;
+}
+
+.place-search-card {
+	margin-top: 18rpx;
+	padding: 20rpx;
+	border: 2rpx solid rgba(15, 118, 110, 0.16);
+	border-radius: 20rpx;
+	background: rgba(15, 118, 110, 0.05);
+}
+
+.place-search-row {
+	display: flex;
+	align-items: center;
+	gap: 12rpx;
+}
+
+.place-search-row .place-search-input {
+	flex: 1;
+	min-width: 0;
+}
+
+.place-search-button {
+	min-width: 112rpx;
+}
+
+.place-search-results {
+	max-height: 420rpx;
+	overflow-y: auto;
+}
+
+.place-search-results-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-top: 12rpx;
+	padding: 8rpx 10rpx;
+	border-bottom: 1rpx solid rgba(36, 59, 83, 0.1);
+}
+
+.place-search-results-count {
+	font-size: 21rpx;
+	color: #627d98;
+}
+
+.place-search-clear {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 40rpx;
+	height: 40rpx;
+	border-radius: 50%;
+	background: #fff0f0;
+	color: #d92d20;
+	font-size: 38rpx;
+	line-height: 1;
+	font-weight: 700;
+	cursor: pointer;
+}
+
+.place-search-result {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12rpx;
+	padding: 16rpx 10rpx;
+	border-top: 1rpx solid rgba(36, 59, 83, 0.1);
+	cursor: pointer;
+}
+
+.place-search-result.active .place-search-result-name {
+	color: #0f766e;
+	font-weight: 700;
+}
+
+.place-search-result-name {
+	min-width: 0;
+	font-size: 24rpx;
+	color: #243b53;
+}
+
+.place-search-result-hint {
+	flex: none;
+	font-size: 20rpx;
+	color: #627d98;
 }
 
 .route-card {

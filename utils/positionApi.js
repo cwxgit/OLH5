@@ -35,6 +35,11 @@ export function getPositionHistoryUrl(start, end) {
 	return `${positionApiBaseUrl}/admin/position/history?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`
 }
 
+export function getPlaceSearchUrl(keyword) {
+	const parameters = new URLSearchParams({ keyword })
+	return `${positionApiBaseUrl}/admin/position/query?${parameters.toString()}`
+}
+
 export function getRoutePlannerUrl(from, to, mode) {
 	const parameters = new URLSearchParams({ from, to, mode })
 	return `${positionApiBaseUrl}/admin/position/route?${parameters.toString()}`
