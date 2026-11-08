@@ -167,6 +167,27 @@
 									<text v-if="step.distance" class="route-step-distance">{{ formatRouteDistance(step.distance) }}</text>
 								</view>
 							</view>
+							<view
+								v-if="routeMode === 'driving' && activeRoute && activeRoute.trafficSegments && activeRoute.trafficSegments.length"
+								class="route-traffic-legend"
+							>
+								<text class="route-traffic-legend-title">路况</text>
+								<view class="route-traffic-legend-item">
+									<text class="route-traffic-dot traffic-clear"></text><text>畅通</text>
+								</view>
+								<view class="route-traffic-legend-item">
+									<text class="route-traffic-dot traffic-slow"></text><text>缓行</text>
+								</view>
+								<view class="route-traffic-legend-item">
+									<text class="route-traffic-dot traffic-congested"></text><text>拥堵</text>
+								</view>
+								<view class="route-traffic-legend-item">
+									<text class="route-traffic-dot traffic-unknown"></text><text>无路况</text>
+								</view>
+								<view class="route-traffic-legend-item">
+									<text class="route-traffic-dot traffic-severe"></text><text>严重拥堵</text>
+								</view>
+							</view>
 							<text class="route-disclaimer">路线由腾讯位置服务提供，实际通行情况以现场为准。</text>
 						</template>
 					</view>
@@ -1638,6 +1659,57 @@ onBeforeUnmount(() => {
 	display: block;
 	margin-top: 10rpx;
 	line-height: 1.5;
+}
+
+.route-traffic-legend {
+	display: flex;
+	align-items: center;
+	gap: 12rpx 20rpx;
+	flex-wrap: wrap;
+	margin-top: 12rpx;
+	padding: 12rpx 16rpx;
+	border-radius: 12rpx;
+	background: rgba(36, 59, 83, 0.05);
+	font-size: 20rpx;
+	color: #52606d;
+}
+
+.route-traffic-legend-title,
+.route-traffic-legend-item {
+	display: inline-flex;
+	align-items: center;
+	gap: 8rpx;
+}
+
+.route-traffic-legend-title {
+	font-weight: 700;
+	color: #243b53;
+}
+
+.route-traffic-dot {
+	width: 16rpx;
+	height: 16rpx;
+	border-radius: 50%;
+}
+
+.traffic-clear {
+	background: #12a66a;
+}
+
+.traffic-slow {
+	background: #f5b400;
+}
+
+.traffic-congested {
+	background: #f97316;
+}
+
+.traffic-unknown {
+	background: #94a3b8;
+}
+
+.traffic-severe {
+	background: #e5484d;
 }
 
 .history-card {

@@ -1,4 +1,4 @@
-const adminBaseUrl = 'https://oladmin.cc'
+const adminBaseUrl = 'https://oladmin.cpxiang.tech'
 
 export const positionApiBaseUrl = adminBaseUrl
 export const loginUrl = `${adminBaseUrl}/login`
@@ -42,6 +42,9 @@ export function getPlaceSearchUrl(keyword) {
 
 export function getRoutePlannerUrl(from, to, mode) {
 	const parameters = new URLSearchParams({ from, to, mode })
+	if (mode === 'driving') {
+		parameters.set('get_speed', '1')
+	}
 	return `${positionApiBaseUrl}/admin/position/route?${parameters.toString()}`
 }
 

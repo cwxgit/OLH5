@@ -306,15 +306,16 @@ export function useRoutePlanner({
 			routeSourceRef.value.addFeature(marker)
 		}
 		const coordType = getLayerConfig().coordType
-		const getRouteCoordinates = (route) => {
-			if (!route || !Array.isArray(route.polyline) || route.polyline.length < 2) {
+		const getPolylineCoordinates = (polyline) => {
+			if (!Array.isArray(polyline) || polyline.length < 2) {
 				return null
 			}
-			return route.polyline.map(({ lat, lng }) => {
+			return polyline.map(({ lat, lng }) => {
 				const wgs84 = gcj02ToWgs84(Number(lng), Number(lat))
 				return fromLonLat(encodeByCoordType(wgs84, coordType))
 			})
 		}
+		const getRouteCoordinates = (route) => getPolylineCoordinates(route && route.polyline)
 		const activeCoordinates = getRouteCoordinates(activeRoute.value)
 		if (!activeCoordinates) {
 			const pickedEndpoints = [
@@ -332,10 +333,42 @@ export function useRoutePlanner({
 		}
 
 		const activeLine = new Feature(new LineString(activeCoordinates))
+		const trafficSegments = routeMode.value === 'driving'
+			&& Array.isArray(activeRoute.value.trafficSegments)
+			? activeRoute.value.trafficSegments
+			: []
 		activeLine.setStyle(new Style({
-			stroke: new Stroke({ color: '#1677ff', width: 6, lineCap: 'round', lineJoin: 'round' })
+			stroke: new Stroke({
+				color: trafficSegments.length ? '#ffffff' : '#1677ff',
+				width: trafficSegments.length ? 8 : 6,
+				lineCap: 'round',
+				lineJoin: 'round'
+			})
 		}))
 		routeSourceRef.value.addFeature(activeLine)
+		const trafficColors = {
+			0: '#12a66a',
+			1: '#f5b400',
+			2: '#f97316',
+			3: '#94a3b8',
+			4: '#e5484d'
+		}
+		trafficSegments.forEach((segment) => {
+			const coordinates = getPolylineCoordinates(segment && segment.polyline)
+			if (!coordinates) {
+				return
+			}
+			const segmentLine = new Feature(new LineString(coordinates))
+			segmentLine.setStyle(new Style({
+				stroke: new Stroke({
+					color: trafficColors[segment.level] || '#1677ff',
+					width: 6,
+					lineCap: 'round',
+					lineJoin: 'round'
+				})
+			}))
+			routeSourceRef.value.addFeature(segmentLine)
+		})
 		addEndpointMarker(activeCoordinates[0], '#0f766e')
 		addEndpointMarker(activeCoordinates[activeCoordinates.length - 1], '#d92d20')
 
