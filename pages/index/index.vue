@@ -26,6 +26,7 @@
 						<text class="status-pill">坐标：{{ activeCoordLabel }}</text>
 						<text v-if="locationLabel" class="status-pill success-pill">{{ locationLabel }}</text>
 					</view>
+					<text class="navigation-note">{{ screenWakeLockStatus }}</text>
 
 					<view class="place-search-card">
 						<text class="route-title">地点搜索</text>
@@ -89,8 +90,7 @@
 								v-for="mode in routeModes"
 								:key="mode.key"
 								class="route-mode-button"
-								:class="{ active: routeMode === mode.key, disabled: mode.key === 'transit' }"
-								:disabled="mode.key === 'transit'"
+								:class="{ active: routeMode === mode.key }"
 								@click="routeMode = mode.key"
 							>
 								{{ mode.label }}
@@ -107,7 +107,7 @@
 								<button class="navigation-button" :disabled="!hasLocated" @click="startNavigation">
 									开始导航
 								</button>
-								<text class="navigation-note">需要允许定位并保持页面开启</text>
+								<text class="navigation-note">需要允许定位；开始导航后会尝试保持屏幕常亮</text>
 							</view>
 							<template v-else>
 								<view class="navigation-head">
@@ -337,6 +337,26 @@
 					</view>
 				</view>
 				<view id="ol-map" class="map-canvas"></view>
+				<view class="layer-panel layer-panel-map-overlay">
+					<view class="layer-list">
+						<view
+							v-for="layer in layerConfigs"
+							:key="layer.key"
+							class="layer-item"
+							:class="{ disabled: layer.disabled }"
+							@click="changeLayer(layer.key)"
+						>
+							<view class="layer-radio" :class="{ active: activeLayerKey === layer.key, disabled: layer.disabled }"></view>
+							<view class="layer-meta">
+								<text class="layer-name">{{ layer.label }}</text>
+								<text class="layer-extra">{{ layer.coordLabel }}{{ layer.note ? ' / ' + layer.note : '' }}</text>
+							</view>
+						</view>
+					</view>
+					<view v-if="eesDisabledHint" class="layer-hint">
+						NASA Viirs 图层仅在缩放级别小于等于 8 时可用，当前缩放过大，已自动禁用。
+					</view>
+				</view>
 				<view
 					v-if="routeContextMenu.visible"
 					class="route-context-menu"
@@ -354,7 +374,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import 'ol/ol.css'
 import Map from 'ol/Map'
 import View from 'ol/View'
@@ -471,6 +491,7 @@ let updateRouteNavigationFromLocation = () => {}
 
 const {
 	startPositionTracking,
+	trackingEnabled: locationTrackingEnabled,
 	disableLocationTracking,
 	locateMe,
 	recenterToUser
@@ -535,6 +556,93 @@ const {
 
 initializeRouteOriginFromLocation = setRouteOriginFromLocation
 updateRouteNavigationFromLocation = updateNavigationLocation
+
+const keepScreenAwake = computed(() => navigationActive.value || locationTrackingEnabled.value)
+const screenWakeLockStatus = ref('持续定位期间会尝试保持屏幕常亮')
+let screenWakeLock = null
+let screenWakeLockRequestId = 0
+let screenWakeLockPending = false
+
+async function requestScreenWakeLock() {
+	if (!keepScreenAwake.value) {
+		return
+	}
+	if (typeof navigator === 'undefined' || !navigator.wakeLock || !navigator.wakeLock.request) {
+		screenWakeLockStatus.value = '当前浏览器不支持自动保持屏幕常亮'
+		return
+	}
+	if (screenWakeLock && !screenWakeLock.released) {
+		screenWakeLockStatus.value = '屏幕常亮已开启'
+		return
+	}
+	if (screenWakeLockPending) {
+		return
+	}
+
+	screenWakeLock = null
+	const requestId = ++screenWakeLockRequestId
+	screenWakeLockPending = true
+	try {
+		const wakeLock = await navigator.wakeLock.request('screen')
+		if (requestId !== screenWakeLockRequestId || !keepScreenAwake.value
+			|| (typeof document !== 'undefined' && document.visibilityState === 'hidden')) {
+			await wakeLock.release()
+			return
+		}
+
+		screenWakeLock = wakeLock
+		screenWakeLockStatus.value = '屏幕常亮已开启'
+		wakeLock.addEventListener('release', () => {
+			if (screenWakeLock === wakeLock) {
+				screenWakeLock = null
+				screenWakeLockStatus.value = keepScreenAwake.value
+					? '屏幕常亮已暂停，返回页面后将重试'
+					: '屏幕常亮已关闭'
+			}
+		}, { once: true })
+	} catch (error) {
+		if (requestId === screenWakeLockRequestId && keepScreenAwake.value) {
+			screenWakeLockStatus.value = '无法保持屏幕常亮，请检查浏览器与系统设置'
+			console.warn('Screen Wake Lock request failed:', error)
+		}
+	} finally {
+		if (requestId === screenWakeLockRequestId) {
+			screenWakeLockPending = false
+		}
+	}
+}
+
+function releaseScreenWakeLock() {
+	screenWakeLockRequestId += 1
+	screenWakeLockPending = false
+	const wakeLock = screenWakeLock
+	screenWakeLock = null
+	screenWakeLockStatus.value = '屏幕常亮已关闭'
+	if (wakeLock && !wakeLock.released) {
+		wakeLock.release().catch((error) => {
+			console.warn('Screen Wake Lock release failed:', error)
+		})
+	}
+}
+
+function handleVisibilityChange() {
+	if (!keepScreenAwake.value) {
+		return
+	}
+	if (document.visibilityState === 'visible') {
+		requestScreenWakeLock()
+	} else {
+		screenWakeLockStatus.value = '页面切到后台时，浏览器可能暂停屏幕常亮'
+	}
+}
+
+watch(keepScreenAwake, (active) => {
+	if (active) {
+		requestScreenWakeLock()
+	} else {
+		releaseScreenWakeLock()
+	}
+}, { flush: 'sync', immediate: true })
 
 function handleMapContextMenu(event) {
 	if (!mapRef.value || !mapTargetElement.value) {
@@ -986,9 +1094,15 @@ async function initMap() {
 onMounted(() => {
 	initMap()
 	startPositionTracking()
+	if (typeof document !== 'undefined') {
+		document.addEventListener('visibilitychange', handleVisibilityChange)
+	}
 })
 
 onBeforeUnmount(() => {
+	if (typeof document !== 'undefined') {
+		document.removeEventListener('visibilitychange', handleVisibilityChange)
+	}
 	disableLocationTracking()
 	stopHistoryPlayback()
 	stopMeasurement()
@@ -1451,13 +1565,6 @@ onBeforeUnmount(() => {
 	color: #ffffff;
 }
 
-.route-mode-button.disabled {
-	background: #e5e7eb;
-	color: #9ca3af;
-	opacity: 1;
-	cursor: not-allowed;
-}
-
 .route-clear-button {
 	background: #fff0ed;
 	color: #b42318;
@@ -1497,7 +1604,7 @@ onBeforeUnmount(() => {
 .route-option-meta,
 .route-disclaimer {
 	font-size: 21rpx;
-	color: #627d98;
+	color: #d0093a;
 }
 
 .route-steps {
@@ -1860,6 +1967,10 @@ onBeforeUnmount(() => {
 	color: #ffffff;
 }
 
+.layer-panel-map-overlay {
+	display: none;
+}
+
 .layer-list {
 	display: grid;
 	grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1984,6 +2095,12 @@ onBeforeUnmount(() => {
 		display: flex;
 		flex-direction: column;
 		gap: 16px;
+		align-self: stretch;
+		min-height: 580px;
+	}
+
+	.sidebar-panel > .hero-panel {
+		flex: 1 0 auto;
 	}
 
 	.workspace-layout.sidebar-collapsed .sidebar-panel {
@@ -2010,6 +2127,7 @@ onBeforeUnmount(() => {
 		height: auto;
 		min-height: 580px;
 		grid-column: auto;
+		align-self: stretch;
 	}
 
 	.workspace-layout.sidebar-collapsed {
@@ -2030,6 +2148,28 @@ onBeforeUnmount(() => {
 		padding: 18px 22px;
 	}
 
+	.sidebar-panel > .layer-panel {
+		display: none;
+	}
+
+	.layer-panel-map-overlay {
+		position: absolute;
+		z-index: 5;
+		right: 16px;
+		bottom: 16px;
+		display: block;
+		box-sizing: border-box;
+		width: min(280px, calc(100% - 32px));
+		max-height: calc(100% - 32px);
+		overflow-y: auto;
+		padding: 14px 18px;
+		background: rgba(16, 24, 32, 0.22);
+	}
+
+	.layer-panel-map-overlay .layer-list {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
 	.layer-panel-head {
 		display: block;
 	}
@@ -2041,15 +2181,24 @@ onBeforeUnmount(() => {
 
 	.layer-item {
 		cursor: pointer;
-		padding: 14px 12px;
 	}
 
 	.layer-item:hover {
-		opacity: 0.92;
+		opacity: 0.85;
 	}
 
 	.map-panel {
 		margin-top: 0;
+	}
+
+	:deep(.ol-scale-line) {
+		background: rgba(16, 24, 32, 0.72);
+	}
+
+	:deep(.ol-scale-line-inner) {
+		border-color: #ffb703;
+		color: #ffb703;
+		text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
 	}
 
 	.workspace-layout.sidebar-collapsed {

@@ -186,6 +186,7 @@ export function useLocation({
 	}
 
 	return {
+		trackingEnabled,
 		startPositionTracking,
 		disableLocationTracking,
 		locateMe,
