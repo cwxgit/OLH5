@@ -15,6 +15,7 @@
 					<view class="hero-actions">
 						<button class="geo-button" @click="locateMe">{{ geoButtonText }}</button>
 						<button v-if="hasLocated" class="ghost-button" @click="recenterToUser">回到我的位置</button>
+						<button class="ghost-button" @click="shareMapView">分享</button>
 						<view class="link-actions">
 							<text class="link-action" @click="openLink(loginUrl)">登录</text>
 							<text class="link-action" @click="openLink(registerUrl)">注册</text>
@@ -423,6 +424,8 @@ import {
 
 const DEFAULT_CENTER = [116.405285, 39.904989]
 const DEFAULT_CENTER_ZOOM = 8
+const MIN_MAP_ZOOM = 3
+const MAX_MAP_ZOOM = 18
 const GEO_ZOOM = 16
 const routeModes = [
 	{ key: 'driving', label: '驾车' },
@@ -440,7 +443,9 @@ const mapTargetElement = ref(null)
 const sidebarVisible = ref(true)
 const positionFeatureRef = ref(null)
 const accuracyFeatureRef = ref(null)
+const sharedCoordinateFeatureRef = ref(null)
 const markerSourceWgs84 = ref(null)
+const sharedCoordinateWgs84 = ref(null)
 const userLocationWgs84 = ref(null)
 const currentAccuracy = ref(0)
 const hasLocated = ref(false)
@@ -774,6 +779,83 @@ function getLayerConfig(key = activeLayerKey.value) {
 	return layerConfigs.find((item) => item.key === key) || layerConfigs[0]
 }
 
+function getSharedMapState() {
+	const state = {
+		center: DEFAULT_CENTER,
+		sharedCoordinate: null,
+		zoom: DEFAULT_CENTER_ZOOM,
+		layerKey: activeLayerKey.value
+	}
+	if (typeof window === 'undefined') {
+		return state
+	}
+
+	const params = new URLSearchParams(window.location.search)
+	const longitudeValue = params.get('mapLng')
+	const latitudeValue = params.get('mapLat')
+	const longitude = Number(longitudeValue)
+	const latitude = Number(latitudeValue)
+	if (longitudeValue !== null && latitudeValue !== null
+		&& longitudeValue.trim() !== '' && latitudeValue.trim() !== ''
+		&& Number.isFinite(longitude) && longitude >= -180 && longitude <= 180
+		&& Number.isFinite(latitude) && latitude >= -90 && latitude <= 90) {
+		state.center = params.get('mapCoord') === 'gcj02'
+			? gcj02ToWgs84(longitude, latitude)
+			: [longitude, latitude]
+		state.sharedCoordinate = state.center
+	}
+
+	const zoomValue = params.get('mapZoom')
+	const zoom = Number(zoomValue)
+	if (zoomValue !== null && Number.isFinite(zoom)) {
+		state.zoom = Math.max(MIN_MAP_ZOOM, Math.min(MAX_MAP_ZOOM, zoom))
+	}
+
+	const layerKey = params.get('mapLayer')
+	if (layerKey && layerConfigs.some((item) => item.key === layerKey)) {
+		state.layerKey = layerKey
+	}
+	if (state.layerKey === 'nasa' && state.zoom > 8) {
+		state.layerKey = 'tengxun'
+	}
+
+	return state
+}
+
+async function shareMapView() {
+	if (!mapRef.value || !viewRef.value || typeof window === 'undefined') {
+		uni.showToast({ title: '地图尚未准备好，暂时无法分享', icon: 'none' })
+		return
+	}
+
+	const center = getMapCenterInWgs84()
+	const zoom = viewRef.value.getZoom()
+	if (!center || !center.every(Number.isFinite) || !Number.isFinite(zoom)) {
+		uni.showToast({ title: '无法读取当前地图视图', icon: 'none' })
+		return
+	}
+
+	const url = new URL(window.location.href)
+	url.searchParams.set('mapLng', center[0].toFixed(6))
+	url.searchParams.set('mapLat', center[1].toFixed(6))
+	url.searchParams.set('mapZoom', zoom.toFixed(2))
+	url.searchParams.set('mapLayer', activeLayerKey.value)
+
+	try {
+		await new Promise((resolve, reject) => {
+			uni.setClipboardData({
+				data: url.toString(),
+				success: resolve,
+				fail: reject
+			})
+		})
+		uni.showToast({ title: '地图链接已复制', icon: 'none' })
+	} catch (error) {
+		console.warn('复制地图分享链接失败', error)
+		uni.showToast({ title: '复制失败，请检查剪贴板权限', icon: 'none' })
+	}
+}
+
 function encodeByCoordType(wgs84, coordType) {
 	if (!wgs84) {
 		return null
@@ -814,7 +896,7 @@ function getMapCenterInWgs84() {
 }
 
 function renderMarker() {
-	if (!positionFeatureRef.value || !accuracyFeatureRef.value) {
+	if (!positionFeatureRef.value || !accuracyFeatureRef.value || !sharedCoordinateFeatureRef.value) {
 		return
 	}
 
@@ -824,6 +906,13 @@ function renderMarker() {
 		positionFeatureRef.value.setGeometry(new Point(fromLonLat(displayCoord)))
 	} else {
 		positionFeatureRef.value.setGeometry(null)
+	}
+
+	if (sharedCoordinateWgs84.value) {
+		const displayCoord = encodeByCoordType(sharedCoordinateWgs84.value, currentLayer.coordType)
+		sharedCoordinateFeatureRef.value.setGeometry(new Point(fromLonLat(displayCoord)))
+	} else {
+		sharedCoordinateFeatureRef.value.setGeometry(null)
 	}
 
 	if (userLocationWgs84.value && currentAccuracy.value > 0) {
@@ -1034,7 +1123,10 @@ function renderPlaceSearchMarker() {
 
 async function initMap() {
 	await nextTick()
-	const center = encodeByCoordType(DEFAULT_CENTER, getLayerConfig().coordType)
+	const sharedMapState = getSharedMapState()
+	activeLayerKey.value = sharedMapState.layerKey
+	sharedCoordinateWgs84.value = sharedMapState.sharedCoordinate
+	const center = encodeByCoordType(sharedMapState.center, getLayerConfig().coordType)
 
 	const positionFeature = new Feature()
 	positionFeature.setStyle(
@@ -1048,8 +1140,16 @@ async function initMap() {
 	)
 
 	const accuracyFeature = new Feature()
+	const sharedCoordinateFeature = new Feature()
+	sharedCoordinateFeature.setStyle(new Style({
+		image: new CircleStyle({
+			radius: 9,
+			fill: new Fill({ color: '#1769ff' }),
+			stroke: new Stroke({ color: '#ffffff', width: 3 })
+		})
+	}))
 	const overlayLayer = new VectorLayer({
-		source: new VectorSource({ features: [accuracyFeature, positionFeature] }),
+		source: new VectorSource({ features: [accuracyFeature, positionFeature, sharedCoordinateFeature] }),
 		style: new Style({
 			fill: new Fill({ color: 'rgba(47, 125, 255, 0.15)' }),
 			stroke: new Stroke({ color: 'rgba(47, 125, 255, 0.5)', width: 2 })
@@ -1072,22 +1172,29 @@ async function initMap() {
 
 	positionFeatureRef.value = positionFeature
 	accuracyFeatureRef.value = accuracyFeature
+	sharedCoordinateFeatureRef.value = sharedCoordinateFeature
 	measurementSourceRef.value = measurementSource
 	historySourceRef.value = historySource
 	routeSourceRef.value = routeSource
 	placeSearchSourceRef.value = placeSearchSource
 	markerSourceWgs84.value = null
 
+	const baseLayers = buildBaseLayers()
+	baseLayers.forEach((layer) => {
+		layer.setVisible(layer.get('layerKey') === activeLayerKey.value)
+	})
+
 	viewRef.value = new View({
 		center: fromLonLat(center),
-		zoom: DEFAULT_CENTER_ZOOM,
-		maxZoom: 18,
-		minZoom: 3
+		zoom: sharedMapState.zoom,
+		maxZoom: MAX_MAP_ZOOM,
+		minZoom: MIN_MAP_ZOOM
 	})
 
 	mapRef.value = new Map({
 		target: 'ol-map',
-		layers: buildBaseLayers().concat(routeLayer, overlayLayer, historyLayer, measurementLayer, placeSearchLayer),
+		pixelRatio: Math.min(window.devicePixelRatio || 1, 1.5),
+		layers: baseLayers.concat(routeLayer, overlayLayer, historyLayer, measurementLayer, placeSearchLayer),
 		view: viewRef.value,
 		controls: defaultControls().extend([
 			new ScaleLine({ units: 'metric' })
@@ -1143,6 +1250,8 @@ onBeforeUnmount(() => {
 	mapTargetElement.value = null
 	positionFeatureRef.value = null
 	accuracyFeatureRef.value = null
+	sharedCoordinateFeatureRef.value = null
+	sharedCoordinateWgs84.value = null
 	measurementSourceRef.value = null
 	historySourceRef.value = null
 	routeSourceRef.value = null
