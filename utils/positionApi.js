@@ -1,4 +1,4 @@
-const adminBaseUrl = 'https://oladmin.cpxiang.tech'
+const adminBaseUrl = 'https://oladmin.cc'
 
 export const positionApiBaseUrl = adminBaseUrl
 export const loginUrl = `${adminBaseUrl}/login`
@@ -54,6 +54,19 @@ export function getReverseGeocodeUrl(latitude, longitude) {
 		lng: String(longitude)
 	})
 	return `${positionApiBaseUrl}/admin/position/reverse?${parameters.toString()}`
+}
+
+export function getWeatherTileUrl(layer) {
+	return `${positionApiBaseUrl}/admin/weather/${layer}/{z}/{x}/{y}`
+}
+
+export function getCurrentWeatherUrl(latitude, longitude, type = 'now') {
+	const parameters = new URLSearchParams({
+		lat: String(latitude),
+		lon: String(longitude),
+		type
+	})
+	return `${positionApiBaseUrl}/admin/weather/current?${parameters.toString()}`
 }
 
 export function request(options) {

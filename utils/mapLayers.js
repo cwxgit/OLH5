@@ -1,6 +1,7 @@
 import TileLayer from 'ol/layer/Tile'
 import XYZ from 'ol/source/XYZ'
 import OSM from 'ol/source/OSM'
+import { getWeatherTileUrl } from './positionApi'
 
 export function buildBaseLayers() {
 	const tengxun = new TileLayer({
@@ -55,4 +56,25 @@ export function buildBaseLayers() {
 	nasa.set('layerKey', 'nasa')
 
 	return [tengxun, osm, google, gaode, arcgis, nasa]
+}
+
+export function buildWeatherLayers() {
+	return [
+		{ key: 'clouds', opacity: 0.7 },
+		{ key: 'radar', opacity: 0.75 },
+		{ key: 'rain', opacity: 0.75 }
+	].map(({ key, opacity }) => {
+		const layer = new TileLayer({
+			source: new XYZ({
+				url: getWeatherTileUrl(key),
+				crossOrigin: 'anonymous',
+				maxZoom: 19
+			}),
+			opacity,
+			visible: false
+		})
+		layer.set('role', 'weather')
+		layer.set('weatherKey', key)
+		return layer
+	})
 }

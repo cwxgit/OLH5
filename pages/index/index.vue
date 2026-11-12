@@ -272,124 +272,56 @@
 						</view>
 				</view>
 
-				<view class="layer-panel">
-					<view class="layer-panel-head">
-						<text class="layer-title">底图切换</text>
-					</view>
-					<view class="layer-list">
-						<view
-							v-for="layer in layerConfigs"
-							:key="layer.key"
-							class="layer-item"
-							:class="{ disabled: layer.disabled }"
-							@click="changeLayer(layer.key)"
-						>
-							<view class="layer-radio" :class="{ active: activeLayerKey === layer.key, disabled: layer.disabled }"></view>
-							<view class="layer-meta">
-								<text class="layer-name">{{ layer.label }}</text>
-								<text class="layer-extra">{{ layer.coordLabel }}{{ layer.note ? ' / ' + layer.note : '' }}</text>
-							</view>
-						</view>
-					</view>
-					<view v-if="eesDisabledHint" class="layer-hint">
-						NASA Viirs 图层仅在缩放级别小于等于 8 时可用，当前缩放过大，已自动禁用。
-					</view>
-				</view>
+				<MapLayerPanel
+					:layers="layerConfigs"
+					:active-layer-key="activeLayerKey"
+					:weather-layer-enabled="weatherLayerEnabled"
+					:ees-disabled-hint="eesDisabledHint"
+					@change-layer="changeLayer"
+					@toggle-weather-layer="toggleWeatherLayer"
+				/>
 			</view>
 
 			<view class="map-panel">
 				<button v-if="!sidebarVisible" class="sidebar-toggle sidebar-toggle-floating" @click="toggleSidebar">显示控制栏</button>
-				<view class="measurement-tools">
-					<view class="measurement-buttons">
-						<button
-							class="measurement-button"
-							:class="{ active: measurementMode === 'distance' }"
-							@click="startMeasurement('distance')"
-						>
-							{{ measurementMode === 'distance' ? '退出测距' : '多点测距' }}
-						</button>
-						<button
-							class="measurement-button"
-							:class="{ active: measurementMode === 'area' }"
-							@click="startMeasurement('area')"
-						>
-							{{ measurementMode === 'area' ? '退出绘制' : '面积测量' }}
-						</button>
-						<button
-							class="measurement-button"
-							:class="{ active: measurementMode === 'circle' }"
-							@click="startMeasurement('circle')"
-						>
-							{{ measurementMode === 'circle' ? '退出圆形测量' : '圆形测量' }}
-						</button>
-						<button
-							v-if="measurements.length"
-							class="measurement-button measurement-clear"
-							@click="clearMeasurements"
-						>
-							清除
-						</button>
-					</view>
-					<text v-if="measurementMode" class="measurement-hint">
-						{{ measurementMode === 'distance'
-							? '左键依次添加节点，左键双击完成测距'
-							: measurementMode === 'circle'
-								? '左键点击圆心并移动鼠标预览半径，左键双击完成'
-								: '左键描绘区域，左键双击完成并闭合' }}
-					</text>
-					<view v-if="measurements.length" class="measurement-results">
-						<view
-							v-for="item in measurements"
-							:key="item.id"
-							class="measurement-result"
-							:class="{ 'circle-result': item.type === 'circle' }"
-						>
-							<template v-if="item.type === 'circle'">
-								<text class="measurement-result-label">周长</text>
-								<text class="measurement-result-value">{{ formatDistance(item.perimeter) }}</text>
-								<text class="measurement-result-label">面积</text>
-								<text class="measurement-result-value">{{ formatArea(item.area) }}</text>
-							</template>
-							<template v-else>
-								<text class="measurement-result-label">{{ item.type === 'distance' ? '距离' : '面积' }}</text>
-								<text class="measurement-result-value">{{ formatMeasurement(item) }}</text>
-							</template>
-							<text class="measurement-result-remove" @click="removeMeasurement(item.id)">×</text>
-						</view>
-					</view>
-				</view>
+				<MeasurementTools
+					:mode="measurementMode"
+					:measurements="measurements"
+					:format-distance="formatDistance"
+					:format-area="formatArea"
+					:format-measurement="formatMeasurement"
+					@start="startMeasurement"
+					@clear="clearMeasurements"
+					@remove="removeMeasurement"
+				/>
 				<view id="ol-map" class="map-canvas"></view>
-				<view class="layer-panel layer-panel-map-overlay">
-					<view class="layer-list">
-						<view
-							v-for="layer in layerConfigs"
-							:key="layer.key"
-							class="layer-item"
-							:class="{ disabled: layer.disabled }"
-							@click="changeLayer(layer.key)"
-						>
-							<view class="layer-radio" :class="{ active: activeLayerKey === layer.key, disabled: layer.disabled }"></view>
-							<view class="layer-meta">
-								<text class="layer-name">{{ layer.label }}</text>
-								<text class="layer-extra">{{ layer.coordLabel }}{{ layer.note ? ' / ' + layer.note : '' }}</text>
-							</view>
-						</view>
-					</view>
-					<view v-if="eesDisabledHint" class="layer-hint">
-						NASA Viirs 图层仅在缩放级别小于等于 8 时可用，当前缩放过大，已自动禁用。
-					</view>
-				</view>
-				<view
-					v-if="routeContextMenu.visible"
-					class="route-context-menu"
-					:style="{ left: `${routeContextMenu.left}px`, top: `${routeContextMenu.top}px` }"
-					@click.stop
-				>
-					<text class="route-context-title">设定路线位置</text>
-					<text class="route-context-coordinate">{{ routeContextMenu.coordinateLabel }}</text>
-					<view class="route-context-action" @click="setMapRouteEndpoint('origin')">设为起点</view>
-					<view class="route-context-action" @click="setMapRouteEndpoint('destination')">设为终点</view>
-				</view>
+				<WeatherDetailPanel
+					:visible="weatherPanel.visible"
+					:loading="weatherPanel.loading"
+					:error="weatherPanel.error"
+					:mode="weatherPanel.mode"
+					:weather="weatherPanel.weather"
+					:coordinate-label="weatherPanel.coordinateLabel"
+					@close="closeWeatherPanel"
+				/>
+				<MapLayerPanel
+					:layers="layerConfigs"
+					:active-layer-key="activeLayerKey"
+					:weather-layer-enabled="weatherLayerEnabled"
+					:ees-disabled-hint="eesDisabledHint"
+					overlay
+					@change-layer="changeLayer"
+					@toggle-weather-layer="toggleWeatherLayer"
+				/>
+				<MapContextMenu
+					:visible="routeContextMenu.visible"
+					:left="routeContextMenu.left"
+					:top="routeContextMenu.top"
+					:coordinate-label="routeContextMenu.coordinateLabel"
+					@select-endpoint="setMapRouteEndpoint"
+					@show-current-weather="showCurrentWeather"
+					@show-forecast-weather="showForecastWeather"
+				/>
 			</view>
 		</view>
 	</view>
@@ -397,6 +329,10 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import MapContextMenu from '../../components/MapContextMenu.vue'
+import MapLayerPanel from '../../components/MapLayerPanel.vue'
+import MeasurementTools from '../../components/MeasurementTools.vue'
+import WeatherDetailPanel from '../../components/WeatherDetailPanel.vue'
 import 'ol/ol.css'
 import Map from 'ol/Map'
 import View from 'ol/View'
@@ -413,9 +349,10 @@ import { useMeasurements } from '../../composables/useMeasurements'
 import { useLocation } from '../../composables/useLocation'
 import { usePositionHistory } from '../../composables/usePositionHistory'
 import { useRoutePlanner } from '../../composables/useRoutePlanner'
-import { buildBaseLayers } from '../../utils/mapLayers'
+import { buildBaseLayers, buildWeatherLayers } from '../../utils/mapLayers'
 import {
 	getPlaceSearchUrl,
+	getCurrentWeatherUrl,
 	loginUrl,
 	registerUrl,
 	request,
@@ -452,6 +389,7 @@ const hasLocated = ref(false)
 const locating = ref(false)
 const locationLabel = ref('')
 const activeLayerKey = ref('tengxun')
+const weatherLayerEnabled = reactive({ clouds: false, radar: false, rain: false })
 const eesDisabledHint = ref(false)
 const measurementMode = ref('')
 const measurementInProgress = ref(false)
@@ -474,6 +412,7 @@ const placeSearchError = ref('')
 const selectedPlaceCode = ref(null)
 const selectedPlace = ref(null)
 let placeSearchRequestId = 0
+let weatherRequestId = 0
 const routeContextMenu = reactive({
 	visible: false,
 	left: 0,
@@ -481,6 +420,14 @@ const routeContextMenu = reactive({
 	lat: 0,
 	lng: 0,
 	coordinateLabel: ''
+})
+const weatherPanel = reactive({
+	visible: false,
+	loading: false,
+	error: '',
+	coordinateLabel: '',
+	mode: 'now',
+	weather: null
 })
 
 const layerConfigs = reactive([
@@ -684,7 +631,7 @@ function handleMapContextMenu(event) {
 	const [longitude, latitude] = wgs84ToGcj02(wgs84[0], wgs84[1])
 	const targetRect = mapTargetElement.value.getBoundingClientRect()
 	const menuWidth = 188
-	const menuHeight = 126
+	const menuHeight = 160
 	const x = event.clientX - targetRect.left
 	const y = event.clientY - targetRect.top
 
@@ -716,6 +663,55 @@ function setMapRouteEndpoint(endpoint) {
 	if (selected) {
 		closeRouteContextMenu()
 	}
+}
+
+async function loadWeather(mode) {
+	const requestId = ++weatherRequestId
+	weatherPanel.visible = true
+	weatherPanel.loading = true
+	weatherPanel.error = ''
+	weatherPanel.mode = mode
+	weatherPanel.coordinateLabel = routeContextMenu.coordinateLabel
+	weatherPanel.weather = null
+	closeRouteContextMenu()
+
+	try {
+		const response = await request({
+			url: getCurrentWeatherUrl(routeContextMenu.lat, routeContextMenu.lng, mode),
+			method: 'GET'
+		})
+		if (requestId !== weatherRequestId) {
+			return
+		}
+
+		const payload = response.data
+		if (!payload || payload.success !== true || !payload.weather || payload.weather.type !== mode) {
+			throw new Error(payload && payload.message ? payload.message : '天气信息格式无效')
+		}
+		weatherPanel.weather = payload.weather
+	} catch (error) {
+		if (requestId === weatherRequestId) {
+			weatherPanel.error = error instanceof Error ? error.message : '天气信息加载失败'
+		}
+	} finally {
+		if (requestId === weatherRequestId) {
+			weatherPanel.loading = false
+		}
+	}
+}
+
+function showCurrentWeather() {
+	return loadWeather('now')
+}
+
+function showForecastWeather() {
+	return loadWeather('future')
+}
+
+function closeWeatherPanel() {
+	weatherRequestId += 1
+	weatherPanel.visible = false
+	weatherPanel.loading = false
 }
 
 const {
@@ -955,6 +951,15 @@ function setLayerVisible(key) {
 	})
 }
 
+function toggleWeatherLayer(key) {
+	weatherLayerEnabled[key] = !weatherLayerEnabled[key]
+	mapRef.value?.getLayers().forEach((layer) => {
+		if (layer.get('role') === 'weather' && layer.get('weatherKey') === key) {
+			layer.setVisible(weatherLayerEnabled[key])
+		}
+	})
+}
+
 function changeLayer(key) {
 	const targetLayer = getLayerConfig(key)
 	if (!targetLayer || targetLayer.disabled) {
@@ -1183,6 +1188,10 @@ async function initMap() {
 	baseLayers.forEach((layer) => {
 		layer.setVisible(layer.get('layerKey') === activeLayerKey.value)
 	})
+	const weatherLayers = buildWeatherLayers()
+	weatherLayers.forEach((layer) => {
+		layer.setVisible(weatherLayerEnabled[layer.get('weatherKey')])
+	})
 
 	viewRef.value = new View({
 		center: fromLonLat(center),
@@ -1194,7 +1203,7 @@ async function initMap() {
 	mapRef.value = new Map({
 		target: 'ol-map',
 		pixelRatio: Math.min(window.devicePixelRatio || 1, 1.5),
-		layers: baseLayers.concat(routeLayer, overlayLayer, historyLayer, measurementLayer, placeSearchLayer),
+		layers: baseLayers.concat(weatherLayers, routeLayer, overlayLayer, historyLayer, measurementLayer, placeSearchLayer),
 		view: viewRef.value,
 		controls: defaultControls().extend([
 			new ScaleLine({ units: 'metric' })
@@ -1228,6 +1237,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+	weatherRequestId += 1
 	if (typeof document !== 'undefined') {
 		document.removeEventListener('visibilitychange', handleVisibilityChange)
 	}
@@ -2001,238 +2011,6 @@ onBeforeUnmount(() => {
 	height: 100%;
 }
 
-.route-context-menu {
-	position: absolute;
-	z-index: 10;
-	box-sizing: border-box;
-	width: 188px;
-	padding: 8px;
-	border: 1px solid rgba(24, 49, 83, 0.14);
-	border-radius: 10px;
-	background: #fffdfa;
-	box-shadow: 0 10px 28px rgba(24, 49, 83, 0.24);
-}
-
-.route-context-title,
-.route-context-coordinate {
-	display: block;
-	padding: 4px 8px;
-}
-
-.route-context-title {
-	font-size: 13px;
-	font-weight: 700;
-	color: #243b53;
-}
-
-.route-context-coordinate {
-	font-size: 11px;
-	color: #627d98;
-}
-
-.route-context-action {
-	padding: 9px 8px;
-	border-radius: 6px;
-	color: #243b53;
-	font-size: 13px;
-	cursor: pointer;
-}
-
-.route-context-action:hover {
-	background: rgba(22, 119, 255, 0.1);
-	color: #1677ff;
-}
-
-.measurement-tools {
-	position: absolute;
-	z-index: 3;
-	top: 12px;
-	right: 12px;
-	box-sizing: border-box;
-	width: min(340px, calc(100% - 24px));
-	max-height: calc(100% - 24px);
-	padding: 10px;
-	border: 1px solid rgba(24, 49, 83, 0.12);
-	border-radius: 12px;
-	background: rgba(255, 253, 250, 0.94);
-	box-shadow: 0 8px 24px rgba(24, 49, 83, 0.18);
-	backdrop-filter: blur(8px);
-}
-
-.measurement-buttons {
-	display: flex;
-	gap: 6px;
-	flex-wrap: wrap;
-}
-
-.measurement-button {
-	margin: 0;
-	padding: 0 10px;
-	height: 34px;
-	line-height: 34px;
-	border: 0;
-	border-radius: 8px;
-	background: #e8edf2;
-	color: #243b53;
-	font-size: 12px;
-}
-
-.measurement-button::after {
-	border: 0;
-}
-
-.measurement-button.active {
-	background: #0f766e;
-	color: #ffffff;
-}
-
-.measurement-button.measurement-clear {
-	margin-left: auto;
-	background: #fff0ed;
-	color: #b42318;
-}
-
-.measurement-hint {
-	display: block;
-	margin-top: 8px;
-	font-size: 12px;
-	line-height: 1.5;
-	color: #52606d;
-}
-
-.measurement-results {
-	max-height: 180px;
-	margin-top: 8px;
-	overflow-y: auto;
-	border-top: 1px solid rgba(36, 59, 83, 0.12);
-}
-
-.measurement-result {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	padding: 8px 2px 2px;
-	font-size: 12px;
-}
-
-.measurement-result.circle-result {
-	display: grid;
-	grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr) auto;
-}
-
-.measurement-result-label {
-	flex: none;
-	color: #52606d;
-}
-
-.measurement-result-value {
-	flex: 1;
-	min-width: 0;
-	font-weight: 600;
-	color: #183153;
-}
-
-.measurement-result-remove {
-	flex: none;
-	padding: 0 4px;
-	color: #b42318;
-	font-size: 18px;
-	line-height: 1;
-}
-
-.layer-panel {
-	padding: 20rpx;
-	border-radius: 24rpx;
-	background: rgba(16, 24, 32, 0.82);
-	backdrop-filter: blur(10px);
-	color: #ffffff;
-}
-
-.layer-panel-map-overlay {
-	display: none;
-}
-
-.layer-list {
-	display: grid;
-	grid-template-columns: repeat(2, minmax(0, 1fr));
-	gap: 8px;
-}
-
-.layer-panel-head {
-	margin-bottom: 10rpx;
-}
-
-.layer-title {
-	display: block;
-	font-size: 30rpx;
-	font-weight: 700;
-}
-
-.layer-item {
-	display: flex;
-	align-items: center;
-	gap: 14rpx;
-	padding: 16rpx 0;
-	border-bottom: 1rpx solid rgba(255, 255, 255, 0.08);
-}
-
-.layer-item:last-child {
-	border-bottom: 0;
-}
-
-.layer-item.disabled {
-	opacity: 0.45;
-}
-
-.layer-radio {
-	width: 24rpx;
-	height: 24rpx;
-	border-radius: 50%;
-	border: 3rpx solid rgba(255, 255, 255, 0.5);
-	background: transparent;
-}
-
-.layer-radio.active {
-	background: #ffb703;
-	border-color: #ffb703;
-	box-shadow: 0 0 0 6rpx rgba(255, 183, 3, 0.18);
-}
-
-.layer-radio.disabled {
-	border-color: rgba(255, 255, 255, 0.18);
-}
-
-.layer-meta {
-	flex: 1;
-	min-width: 0;
-}
-
-.layer-name,
-.layer-extra {
-	display: block;
-}
-
-.layer-name {
-	font-size: 26rpx;
-	font-weight: 600;
-}
-
-.layer-extra {
-	margin-top: 6rpx;
-	font-size: 20rpx;
-	color: rgba(255, 255, 255, 0.72);
-}
-
-.layer-hint {
-	margin-top: 16rpx;
-	padding: 16rpx;
-	border-radius: 16rpx;
-	background: rgba(255, 214, 10, 0.12);
-	font-size: 22rpx;
-	line-height: 1.55;
-	color: #ffe082;
-}
-
 :deep(.ol-zoom) {
 	left: 22rpx;
 	top: 22rpx;
@@ -2325,47 +2103,8 @@ onBeforeUnmount(() => {
 		border-radius: 30rpx;
 	}
 
-	.layer-panel {
-		padding: 18px 22px;
-	}
-
 	.sidebar-panel > .layer-panel {
 		display: none;
-	}
-
-	.layer-panel-map-overlay {
-		position: absolute;
-		z-index: 5;
-		right: 16px;
-		bottom: 16px;
-		display: block;
-		box-sizing: border-box;
-		width: min(280px, calc(100% - 32px));
-		max-height: calc(100% - 32px);
-		overflow-y: auto;
-		padding: 14px 18px;
-		background: rgba(16, 24, 32, 0.22);
-	}
-
-	.layer-panel-map-overlay .layer-list {
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-	}
-
-	.layer-panel-head {
-		display: block;
-	}
-
-	.layer-list {
-		grid-template-columns: minmax(0, 1fr);
-		gap: 0;
-	}
-
-	.layer-item {
-		cursor: pointer;
-	}
-
-	.layer-item:hover {
-		opacity: 0.85;
 	}
 
 	.map-panel {
