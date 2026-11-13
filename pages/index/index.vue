@@ -276,6 +276,7 @@
 					:layers="layerConfigs"
 					:active-layer-key="activeLayerKey"
 					:weather-layer-enabled="weatherLayerEnabled"
+					:weather-layer-error="weatherLayerError"
 					:ees-disabled-hint="eesDisabledHint"
 					@change-layer="changeLayer"
 					@toggle-weather-layer="toggleWeatherLayer"
@@ -308,6 +309,7 @@
 					:layers="layerConfigs"
 					:active-layer-key="activeLayerKey"
 					:weather-layer-enabled="weatherLayerEnabled"
+					:weather-layer-error="weatherLayerError"
 					:ees-disabled-hint="eesDisabledHint"
 					overlay
 					@change-layer="changeLayer"
@@ -349,7 +351,7 @@ import { useMeasurements } from '../../composables/useMeasurements'
 import { useLocation } from '../../composables/useLocation'
 import { usePositionHistory } from '../../composables/usePositionHistory'
 import { useRoutePlanner } from '../../composables/useRoutePlanner'
-import { buildBaseLayers, buildWeatherLayers } from '../../utils/mapLayers'
+import { buildBaseLayers, buildRainViewerLayers, refreshRainViewerLayer } from '../../utils/mapLayers'
 import {
 	getPlaceSearchUrl,
 	getCurrentWeatherUrl,
@@ -389,7 +391,8 @@ const hasLocated = ref(false)
 const locating = ref(false)
 const locationLabel = ref('')
 const activeLayerKey = ref('tengxun')
-const weatherLayerEnabled = reactive({ clouds: false, radar: false, rain: false })
+const weatherLayerEnabled = reactive({ radar: false })
+const weatherLayerError = ref('')
 const eesDisabledHint = ref(false)
 const measurementMode = ref('')
 const measurementInProgress = ref(false)
@@ -413,6 +416,9 @@ const selectedPlaceCode = ref(null)
 const selectedPlace = ref(null)
 let placeSearchRequestId = 0
 let weatherRequestId = 0
+let rainViewerRefreshTimer = null
+let rainViewerRequestId = 0
+let rainViewerHasFrame = false
 const routeContextMenu = reactive({
 	visible: false,
 	left: 0,
@@ -951,11 +957,68 @@ function setLayerVisible(key) {
 	})
 }
 
+function getRainViewerLayer() {
+	return mapRef.value?.getLayers().getArray().find((layer) => (
+		layer.get('role') === 'weather' && layer.get('weatherKey') === 'radar'
+	))
+}
+
+async function updateRainViewerLayer() {
+	const requestId = ++rainViewerRequestId
+	const layer = getRainViewerLayer()
+	if (!layer) {
+		return false
+	}
+
+	try {
+		await refreshRainViewerLayer(layer)
+		if (requestId !== rainViewerRequestId || !weatherLayerEnabled.radar) {
+			return false
+		}
+		rainViewerHasFrame = true
+		weatherLayerError.value = ''
+		layer.setVisible(true)
+		return true
+	} catch (error) {
+		console.error('RainViewer radar update failed:', error)
+		if (requestId === rainViewerRequestId) {
+			weatherLayerError.value = 'RainViewer 雷达数据暂时无法加载，请稍后重试'
+			if (!rainViewerHasFrame) {
+				layer.setVisible(false)
+			}
+		}
+		return false
+	}
+}
+
 function toggleWeatherLayer(key) {
-	weatherLayerEnabled[key] = !weatherLayerEnabled[key]
-	mapRef.value?.getLayers().forEach((layer) => {
-		if (layer.get('role') === 'weather' && layer.get('weatherKey') === key) {
-			layer.setVisible(weatherLayerEnabled[key])
+	if (key !== 'radar') {
+		return
+	}
+
+	weatherLayerEnabled.radar = !weatherLayerEnabled.radar
+	const layer = getRainViewerLayer()
+	if (!weatherLayerEnabled.radar) {
+		rainViewerRequestId += 1
+		if (rainViewerRefreshTimer !== null) {
+			clearInterval(rainViewerRefreshTimer)
+			rainViewerRefreshTimer = null
+		}
+		layer?.setVisible(false)
+		weatherLayerError.value = ''
+		return
+	}
+
+	if (rainViewerHasFrame) {
+		layer?.setVisible(true)
+	}
+	void updateRainViewerLayer().then((loaded) => {
+		if (loaded && weatherLayerEnabled.radar && rainViewerRefreshTimer === null) {
+			rainViewerRefreshTimer = setInterval(() => {
+				if (weatherLayerEnabled.radar) {
+					void updateRainViewerLayer()
+				}
+			}, 5 * 60 * 1000)
 		}
 	})
 }
@@ -1188,7 +1251,7 @@ async function initMap() {
 	baseLayers.forEach((layer) => {
 		layer.setVisible(layer.get('layerKey') === activeLayerKey.value)
 	})
-	const weatherLayers = buildWeatherLayers()
+	const weatherLayers = buildRainViewerLayers()
 	weatherLayers.forEach((layer) => {
 		layer.setVisible(weatherLayerEnabled[layer.get('weatherKey')])
 	})
@@ -1238,6 +1301,11 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
 	weatherRequestId += 1
+	rainViewerRequestId += 1
+	if (rainViewerRefreshTimer !== null) {
+		clearInterval(rainViewerRefreshTimer)
+		rainViewerRefreshTimer = null
+	}
 	if (typeof document !== 'undefined') {
 		document.removeEventListener('visibilitychange', handleVisibilityChange)
 	}

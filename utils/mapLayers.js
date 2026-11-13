@@ -1,7 +1,10 @@
 import TileLayer from 'ol/layer/Tile'
 import XYZ from 'ol/source/XYZ'
 import OSM from 'ol/source/OSM'
-import { getWeatherTileUrl } from './positionApi'
+
+const RAINVIEWER_METADATA_URL = 'https://api.rainviewer.com/public/weather-maps.json'
+const RAINVIEWER_TILE_HOST = 'https://tilecache.rainviewer.com'
+const RAINVIEWER_MAX_ZOOM = 7
 
 export function buildBaseLayers() {
 	const tengxun = new TileLayer({
@@ -58,23 +61,41 @@ export function buildBaseLayers() {
 	return [tengxun, osm, google, gaode, arcgis, nasa]
 }
 
-export function buildWeatherLayers() {
-	return [
-		{ key: 'clouds', opacity: 0.7 },
-		{ key: 'radar', opacity: 0.75 },
-		{ key: 'rain', opacity: 0.75 }
-	].map(({ key, opacity }) => {
-		const layer = new TileLayer({
-			source: new XYZ({
-				url: getWeatherTileUrl(key),
-				crossOrigin: 'anonymous',
-				maxZoom: 19
-			}),
-			opacity,
-			visible: false
-		})
-		layer.set('role', 'weather')
-		layer.set('weatherKey', key)
-		return layer
+export function buildRainViewerLayers() {
+	const layer = new TileLayer({
+		source: new XYZ({
+			url: `${RAINVIEWER_TILE_HOST}/v2/radar/placeholder/256/{z}/{x}/{y}/2/1_1.png`,
+			crossOrigin: 'anonymous',
+			maxZoom: RAINVIEWER_MAX_ZOOM,
+			attributions: '<a href="https://www.rainviewer.com/" target="_blank" rel="noopener noreferrer">Weather data by RainViewer</a>'
+		}),
+		opacity: 0.85,
+		visible: false
 	})
+	layer.set('role', 'weather')
+	layer.set('weatherKey', 'radar')
+	return [layer]
+}
+
+export async function refreshRainViewerLayer(layer) {
+	const response = await fetch(RAINVIEWER_METADATA_URL, { cache: 'no-cache' })
+	if (!response.ok) {
+		throw new Error(`RainViewer metadata request returned HTTP ${response.status}`)
+	}
+
+	const metadata = await response.json()
+	const latestFrame = metadata?.radar?.past?.at(-1)
+	if (metadata?.host !== RAINVIEWER_TILE_HOST
+		|| !latestFrame
+		|| typeof latestFrame.path !== 'string'
+		|| !/^\/v2\/radar\/[A-Za-z0-9_-]+$/.test(latestFrame.path)) {
+		throw new Error('RainViewer metadata did not contain a valid latest radar frame')
+	}
+
+	const source = layer.getSource()
+	const tileUrl = `${metadata.host}${latestFrame.path}/256/{z}/{x}/{y}/2/1_1.png`
+	const urls = source.getUrls()
+	if (!urls || urls[0] !== tileUrl) {
+		source.setUrl(tileUrl)
+	}
 }

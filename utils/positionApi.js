@@ -56,10 +56,6 @@ export function getReverseGeocodeUrl(latitude, longitude) {
 	return `${positionApiBaseUrl}/admin/position/reverse?${parameters.toString()}`
 }
 
-export function getWeatherTileUrl(layer) {
-	return `${positionApiBaseUrl}/admin/weather/${layer}/{z}/{x}/{y}`
-}
-
 export function getCurrentWeatherUrl(latitude, longitude, type = 'now') {
 	const parameters = new URLSearchParams({
 		lat: String(latitude),

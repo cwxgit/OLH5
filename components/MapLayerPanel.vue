@@ -35,6 +35,15 @@
 				</view>
 			</view>
 		</view>
+		<text v-if="weatherLayerError" class="weather-layer-error">{{ weatherLayerError }}</text>
+		<a
+			class="weather-layer-credit"
+			href="https://www.rainviewer.com/"
+			target="_blank"
+			rel="noopener noreferrer"
+		>
+			天气雷达数据：RainViewer
+		</a>
 	</view>
 </template>
 
@@ -43,15 +52,14 @@ defineProps({
 	layers: { type: Array, required: true },
 	activeLayerKey: { type: String, default: '' },
 	weatherLayerEnabled: { type: Object, required: true },
+	weatherLayerError: { type: String, default: '' },
 	eesDisabledHint: { type: Boolean, default: false },
 	overlay: { type: Boolean, default: false }
 })
 const emit = defineEmits(['change-layer', 'toggle-weather-layer'])
 
 const weatherLayers = [
-	{ key: 'clouds', label: '云量', note: '天气云图叠加' },
-	{ key: 'radar', label: '雷达降水', note: '当前降水分布' },
-	{ key: 'rain', label: '雨带', note: '降雨量分布' }
+	{ key: 'radar', label: '雷达降水', note: '近 2 小时回波 · 10 分钟更新' }
 ]
 </script>
 
@@ -147,6 +155,23 @@ const weatherLayers = [
 	font-size: 22rpx;
 	line-height: 1.55;
 	color: #ffe082;
+}
+
+.weather-layer-error,
+.weather-layer-credit {
+	display: block;
+	margin-top: 12rpx;
+	font-size: 20rpx;
+	line-height: 1.5;
+}
+
+.weather-layer-error {
+	color: #ffc2b8;
+}
+
+.weather-layer-credit {
+	color: rgba(255, 255, 255, 0.8);
+	text-decoration: underline;
 }
 
 @media screen and (min-width: 768px) and (hover: hover) and (pointer: fine) {
