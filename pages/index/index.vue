@@ -7,9 +7,6 @@
 					<view class="hero-copy">
 						<text class="eyebrow">OLH5 / Vue3 + OpenLayers</text>
 						<text class="hero-title">移动端地图浏览与路线规划</text>
-						<text class="hero-desc">
-							复刻 `layers.cpxiang.tech` 的核心能力，保留原有后端接口调用路径，并针对 H5 场景优化布局与交互。
-						</text>
 					</view>
 
 					<view class="hero-actions">
@@ -1486,30 +1483,22 @@ onBeforeUnmount(() => {
 	color: #243b53;
 }
 
-.hero-desc {
-	display: block;
-	margin-top: 14rpx;
-	font-size: 26rpx;
-	line-height: 1.65;
-	color: #52606d;
-}
-
 .hero-actions {
 	display: flex;
 	gap: 16rpx;
-	margin-top: 24rpx;
+	margin-top: 16rpx;
 	flex-wrap: wrap;
 }
 
 .geo-button,
 .ghost-button {
 	margin: 0;
-	height: 84rpx;
-	line-height: 84rpx;
-	padding: 0 28rpx;
+	height: 60rpx;
+	line-height: 60rpx;
+	padding: 0 20rpx;
 	border-radius: 999rpx;
-	font-size: 28rpx;
-	font-weight: 600;
+	font-size: 22rpx;
+	font-weight: 300;
 }
 
 .geo-button {
