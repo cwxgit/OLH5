@@ -23,6 +23,7 @@ export function usePlaceSearch({
 	const selectedPlaceCode = ref(null)
 	const selectedPlace = ref(null)
 	let placeSearchRequestId = 0
+	let searchDebounceTimer = null
 
 	function getPlaceDisplayCoordinate(gcj02) {
 		return getLayerConfig().coordType === 'gcj02'
@@ -67,7 +68,14 @@ export function usePlaceSearch({
 		selectedPlaceCode.value = null
 		selectedPlace.value = null
 		renderPlaceSearchMarker()
-		if (!keyword || Array.from(keyword).length > 100) {
+		if (!keyword) {
+			placeSearchResults.value = []
+			placeSearchLoading.value = false
+			placeSearchLoaded.value = false
+			placeSearchError.value = ''
+			return
+		}
+		if (Array.from(keyword).length > 100) {
 			placeSearchResults.value = []
 			placeSearchLoading.value = false
 			placeSearchLoaded.value = false
@@ -133,7 +141,21 @@ export function usePlaceSearch({
 		}
 	}
 
+	function debouncedSearchPlaces(delay = 400) {
+		if (searchDebounceTimer !== null) {
+			clearTimeout(searchDebounceTimer)
+		}
+		searchDebounceTimer = setTimeout(() => {
+			searchDebounceTimer = null
+			searchPlaces()
+		}, delay)
+	}
+
 	function clearPlaceSearch() {
+		if (searchDebounceTimer !== null) {
+			clearTimeout(searchDebounceTimer)
+			searchDebounceTimer = null
+		}
 		placeSearchRequestId += 1
 		placeSearchKeyword.value = ''
 		placeSearchResults.value = []
@@ -165,6 +187,7 @@ export function usePlaceSearch({
 		selectedPlaceCode,
 		selectedPlace,
 		searchPlaces,
+		debouncedSearchPlaces,
 		clearPlaceSearch,
 		selectPlace,
 		renderPlaceSearchMarker,

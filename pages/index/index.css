@@ -16,7 +16,9 @@
 }
 
 .sidebar-panel {
-	display: contents;
+	display: flex;
+	flex-direction: column;
+	gap: 24rpx;
 }
 
 .hero-panel,
@@ -688,12 +690,17 @@
 
 .map-panel {
 	position: relative;
-	height: 60vh;
-	min-height: 420px;
+	height: 50vh;
+	height: 50dvh;
 	border-radius: 30rpx;
 	overflow: hidden;
 	box-shadow: 0 24rpx 56rpx rgba(36, 59, 83, 0.18);
 	background: #dbe3da;
+}
+
+/* 移动端：地图排在控制面板上方 */
+.workspace-layout > .map-panel {
+	order: -1;
 }
 
 .sidebar-toggle-floating {
@@ -807,6 +814,12 @@
 		min-height: 580px;
 		grid-column: auto;
 		align-self: stretch;
+		order: 0;
+	}
+
+	/* 桌面端恢复“控制栏在左、地图在右”的顺序 */
+	.workspace-layout > .map-panel {
+		order: 0;
 	}
 
 	.workspace-layout.sidebar-collapsed {

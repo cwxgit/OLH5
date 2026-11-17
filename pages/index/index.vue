@@ -35,12 +35,9 @@
 								:value="placeSearchKeyword"
 								placeholder="输入地点名称"
 								confirm-type="search"
-								@input="placeSearchKeyword = $event.detail.value"
+								@input="handlePlaceSearchInput"
 								@confirm="searchPlaces"
 							/>
-							<button class="history-button place-search-button" :disabled="placeSearchLoading" @click="searchPlaces">
-								{{ placeSearchLoading ? '搜索中…' : '搜索' }}
-							</button>
 						</view>
 						<text v-if="placeSearchError" class="place-search-message place-search-error">{{ placeSearchError }}</text>
 						<view v-if="placeSearchResults.length" class="place-search-results">
@@ -532,6 +529,7 @@ const {
 	selectedPlaceCode,
 	selectedPlace,
 	searchPlaces,
+	debouncedSearchPlaces,
 	clearPlaceSearch,
 	selectPlace,
 	renderPlaceSearchMarker
@@ -542,12 +540,18 @@ const {
 	geoZoom: GEO_ZOOM
 })
 
+function handlePlaceSearchInput(event) {
+	placeSearchKeyword.value = event.detail.value
+	debouncedSearchPlaces()
+}
+
 const {
 	routeContextMenu,
 	handleMapContextMenu,
 	closeRouteContextMenu,
 	handleDocumentPointerDown,
-	setMapRouteEndpoint
+	setMapRouteEndpoint,
+	cleanupRouteContextMenu
 } = useMapContextMenu({
 	mapRef,
 	mapTargetElement,
@@ -976,6 +980,7 @@ onBeforeUnmount(() => {
 	stopHistoryPlayback()
 	stopMeasurement()
 	stopNavigation()
+	cleanupRouteContextMenu()
 	if (mapTargetElement.value) {
 		mapTargetElement.value.removeEventListener('contextmenu', handleMapContextMenu)
 	}
